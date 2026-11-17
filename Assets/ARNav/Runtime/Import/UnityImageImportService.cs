@@ -3,7 +3,7 @@ using System;
 
 namespace ARNav.Runtime.Import
 {
-    /// Editor picker implementation. Android remains an explicit integration boundary until a native picker is selected.
+    /// Selects floor-plan images through the Editor picker or the Android document-picker bridge.
     public sealed class UnityImageImportService : MonoBehaviour, IImageImportService
     {
         private bool busy;
@@ -42,12 +42,19 @@ namespace ARNav.Runtime.Import
             if (callback == null) throw new ArgumentNullException("callback");
             if (busy) { callback(ImageImportResult.Failure("An image import is already in progress.")); return; }
 #if UNITY_EDITOR
-            var path = UnityEditor.EditorUtility.OpenFilePanel("Import Floor Plan", "", "png,jpg,jpeg");
-            callback(string.IsNullOrEmpty(path) ? ImageImportResult.Cancelled() : ImageImportResult.Success(path, System.IO.Path.GetFileName(path)));
+            try
+            {
+                var path = UnityEditor.EditorUtility.OpenFilePanel("Import Floor Plan", "", "png,jpg,jpeg");
+                callback(string.IsNullOrEmpty(path) ? ImageImportResult.Cancelled() : ImageImportResult.Success(path, System.IO.Path.GetFileName(path)));
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning("ARNav: image selection failed: " + exception.Message);
+                callback(ImageImportResult.Failure("The image picker could not open. Try selecting the image again."));
+            }
 #elif UNITY_ANDROID
             busy = true;
             pendingCallback = callback;
-            lastResponseJson = null;
             try
             {
                 Debug.Log("ARNav: opening Android document picker.");
@@ -67,7 +74,7 @@ namespace ARNav.Runtime.Import
         private string lastResponseJson;
         public void OnAndroidPickerResult(string responseJson)
         {
-            if (string.IsNullOrEmpty(responseJson) || (responseJson == lastResponseJson && pendingCallback == null))
+            if (string.IsNullOrEmpty(responseJson) || responseJson == lastResponseJson)
             {
                 Debug.Log("ARNav: duplicate Android picker response ignored.");
                 return;

@@ -4,6 +4,7 @@ using UnityEngine.UI;
 using ARNav.Runtime.Navigation;
 using ARNav.Runtime.Location;
 using ARNav.Runtime.Import;
+using ARNav.Runtime.Extraction;
 
 namespace ARNav.Runtime.App
 {
@@ -19,6 +20,10 @@ namespace ARNav.Runtime.App
         private NavigationController navigation;
         private Button topViewButton;
         private Button export3DButton;
+        private Button setupImportButton;
+        private Text setupImportLabel;
+        private FloorPlanAnalysisController analysis;
+        private System.Action<bool> analysisStateAction;
         private Slider angleSlider, scaleSlider;
         private UnityEngine.Events.UnityAction topViewAction;
         private UnityEngine.Events.UnityAction export3DAction;
@@ -45,10 +50,13 @@ namespace ARNav.Runtime.App
             Hide("TopBar", "PrimaryActions", "AnnotationEditorPanel", "ScaleCalibrationPanel", "GeoCalibrationPanel", "LocationHudText", "LocationMockPanel", "Enable GPS");
             controls = CreatePanel("ARNavControls", new Vector2(0.02f, 0.01f), new Vector2(0.98f, 0.20f));
             var import = CreateButton("Import", controls.transform, new Vector2(0.01f, 0.58f), new Vector2(0.23f, 0.94f));
+            setupImportButton = import; setupImportLabel = import.GetComponentInChildren<Text>();
             var copy = CreateButton("Copy JSON", controls.transform, new Vector2(0.26f, 0.58f), new Vector2(0.49f, 0.94f));
             var build = CreateButton("BUILD 3D", controls.transform, new Vector2(0.52f, 0.58f), new Vector2(0.76f, 0.94f));
             var gps = CreateButton("GPS", controls.transform, new Vector2(0.79f, 0.58f), new Vector2(0.99f, 0.94f));
             import.onClick.AddListener(setup.ImportFloorPlan);
+            analysis = GetComponent<FloorPlanAnalysisController>();
+            if (analysis != null) { analysisStateAction = analyzing => { if (setupImportLabel != null) setupImportLabel.text = analyzing ? "Cancel analysis" : "Import"; }; analysis.AnalysisStateChanged += analysisStateAction; }
             copy.onClick.AddListener(setup.CopyCurrentJson);
             build.onClick.AddListener(setup.Open3DPreview);
             var location = FindObjectOfType<LocationTrackingController>();
@@ -96,6 +104,7 @@ namespace ARNav.Runtime.App
             if (topViewButton != null && topViewAction != null) topViewButton.onClick.RemoveListener(topViewAction);
             if (export3DButton != null && export3DAction != null) export3DButton.onClick.RemoveListener(export3DAction);
             if (navigation != null && exportAvailabilityAction != null) navigation.ExportAvailabilityChanged -= exportAvailabilityAction;
+            if (analysis != null && analysisStateAction != null) analysis.AnalysisStateChanged -= analysisStateAction;
         }
 
         private void CopyActiveJson()

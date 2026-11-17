@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Globalization;
 using ARNav.Core.Data;
 using ARNav.Core.Calibration;
@@ -53,6 +54,8 @@ namespace ARNav.Runtime.App
         private MapImageStorageService imageStorage;
         private MapSession session;
         private string analysisSessionId;
+        private bool importOperationActive;
+        private bool processingImageImport;
 
         private void Awake()
         {
@@ -62,6 +65,7 @@ namespace ARNav.Runtime.App
             if (analyzeButton != null) analyzeButton.onClick.AddListener(AnalyzeFloorPlan);
             if (showOriginalButton != null) showOriginalButton.onClick.AddListener(ToggleOriginalImage);
             if (imageImporter != null) imageImporter.ResultRecovered += HandleImportResult;
+            if (analysisController != null) { analysisController.ProgressChanged += HandleAnalysisProgress; analysisController.AnalysisStateChanged += HandleAnalysisState; }
             if (editMapButton != null) editMapButton.onClick.AddListener(ToggleEditorPanel);
             if (annotationEditorPanel != null) annotationEditorPanel.SetActive(false);
             // Keep the location service available to the minimal GPS control; its
@@ -222,72 +226,158 @@ namespace ARNav.Runtime.App
 
         public void ImportFloorPlan()
         {
-            if (imageImporter == null || session.ActiveProject == null) { SetStatus("Image import is not configured."); return; }
-            imageImporter.SelectImage(HandleImportResult);
+            if (analysisController != null && analysisController.IsAnalyzing) { analysisController.CancelAnalysis(); SetStatus("Floor-plan analysis cancelled."); return; }
+            if (importOperationActive || processingImageImport) { SetStatus("An image import is already in progress."); return; }
+            if (imageImporter == null || session == null || session.ActiveProject == null) { SetStatus("Image import is not configured."); return; }
+            importOperationActive = true;
+            if (importButton != null) importButton.interactable = false;
+            SetStatus("Choose a PNG or JPEG floor plan...");
+            try { imageImporter.SelectImage(HandleImportResult); }
+            catch (Exception exception)
+            {
+                CompleteImageImport();
+                SetStatus(MapImageStorageService.ToUserFacingError(exception));
+                Debug.LogException(exception);
+            }
         }
 
         private void HandleImportResult(ImageImportResult result)
         {
-            if (result == null) { SetStatus("Could not read the selected document."); return; }
-            if (result.cancelled) { SetStatus("Image import cancelled."); return; }
-            if (!result.succeeded) { SetStatus(result.error); return; }
-            analysisController?.DiscardTransientState();
-            var previous = session.ActiveProject;
-            var oldPath = previous.sourceImage == null ? null : previous.sourceImage.pathReference;
-            var blank = MapProjectFactory.CreateBlank(previous.projectId, previous.projectName);
-            session.Open(blank, MapSetupState.NoMap);
-            analysisSessionId = session.SessionId;
-            viewer?.Unload();
-            annotationController?.Initialize(blank, repository, HandleAnnotationsCommitted);
-            SetStatus("Replacing map...");
-            try { repository.SaveProject(blank); } catch (Exception exception) { Debug.LogException(exception); }
-            StoredMapImage stored = null;
+            if (result == null) { CompleteImageImport(); SetStatus("The image picker returned no result. Try selecting the image again."); return; }
+            if (result.cancelled) { CompleteImageImport(); SetStatus("Image selection cancelled. Your current map is unchanged."); return; }
+            if (!result.succeeded) { CompleteImageImport(); SetStatus(string.IsNullOrWhiteSpace(result.error) ? "The image could not be selected. Try again." : result.error); return; }
+            if (processingImageImport) return; // Ignore duplicate callbacks without touching the active source file.
+            importOperationActive = true; processingImageImport = true;
+            if (importButton != null) importButton.interactable = false;
+            StartCoroutine(ImportImageRoutine(result));
+        }
+
+        private IEnumerator ImportImageRoutine(ImageImportResult result)
+        {
+            SetStatus("Reading image...");
+            yield return null;
+            SetStatus("Validating file and decoding image...");
+            yield return null;
+
+            MapProjectData candidate;
+            StoredMapImage stored;
+            string oldPath;
+            string error;
+            if (!TryPrepareImageCandidate(result, out candidate, out stored, out oldPath, out error))
+            {
+                SetStatus(error); FinishImageImport(result); yield break;
+            }
+
+            SetStatus("Preparing map...");
+            yield return null;
+            if (!TryCommitImageCandidate(candidate, stored, oldPath, result.displayName, result.sourceUri, out error)) SetStatus(error);
+            FinishImageImport(result);
+        }
+
+        private bool TryPrepareImageCandidate(ImageImportResult result, out MapProjectData candidate, out StoredMapImage stored, out string oldPath, out string error)
+        {
+            candidate = null; stored = null; oldPath = null; error = null;
             try
             {
-                stored = imageStorage.ImportAndStore(blank, result.sourcePath);
-                session.ActiveProject.sourceImage.fileName = string.IsNullOrWhiteSpace(result.displayName) ? System.IO.Path.GetFileName(result.sourcePath) : result.displayName;
-                session.ActiveProject.sourceImage.pathReference = stored.relativePath;
-                session.ActiveProject.sourceImage.originalWidthPixels = stored.width;
-                session.ActiveProject.sourceImage.originalHeightPixels = stored.height;
-                session.ActiveProject.sourceImage.format = stored.format;
-                session.ActiveProject.sourceImage.sha256 = stored.sha256;
-                session.ActiveProject.sourceImage.sourceByteLength = stored.sourceByteLength;
-                session.ActiveProject.sourceImage.sourceUri = result.sourceUri;
-                session.ActiveProject.sourceImage.importedUtc = DateTime.UtcNow.ToString("o");
-                // A new source image invalidates source geometry and all derived/calibrated stages.
-                var importedFloor = session.ActiveProject.floors != null && session.ActiveProject.floors.Count > 0 ? session.ActiveProject.floors[0] : null;
-                if (importedFloor != null) { importedFloor.sourceAnnotations = new FloorPlanAnnotationData(); importedFloor.rooms.Clear(); importedFloor.walls.Clear(); importedFloor.doors.Clear(); }
-                session.ActiveProject.scaleCalibration = new ScaleCalibrationData();
-                repository.SaveProject(session.ActiveProject);
-                imageStorage.DeleteIfObsolete(session.ActiveProject, oldPath, stored.relativePath);
-                // Every successful import starts a distinct runtime session. Any
-                // coroutine started for the previous image carries its obsolete ID.
-                session.Open(session.ActiveProject, MapSetupState.ImageImported); analysisSessionId = session.SessionId; session.MarkSaved();
-                if (viewer != null) viewer.Load(stored.texture, stored.width, stored.height);
-                annotationController?.Refresh();
-                scaleCalibrationController?.ResetPoints();
-                if (geoCalibrationController != null) geoCalibrationController.SetActive(false);
-                if (session.ActiveProject.geographicCalibration != null) { session.ActiveProject.geographicCalibration.anchors.Clear(); session.ActiveProject.geographicCalibration.isValid = false; }
-                UpdateScaleInfo();
-                UpdateGeoInfo();
-                SetStatus("Imported " + stored.width + " x " + stored.height + " image."); stored = null;
-                UpdatePrimaryControls();
-                // The minimal mobile workflow analyzes immediately after import; the
-                // production AnalyzeFloorPlan method remains the single extraction path.
-                AnalyzeFloorPlan();
+                if (session == null || session.ActiveProject == null) throw new InvalidOperationException("Open a map session before importing an image.");
+                var previous = session.ActiveProject;
+                oldPath = previous.sourceImage == null ? null : previous.sourceImage.pathReference;
+                // Work against a detached candidate. The active project, viewer and
+                // saved JSON remain untouched unless every import step succeeds.
+                candidate = MapJsonSerializer.Deserialize(MapJsonSerializer.Serialize(previous));
+                stored = imageStorage.ImportAndStore(candidate, result.sourcePath);
+                return true;
             }
             catch (Exception exception)
             {
-                if (stored != null) { imageStorage.DeleteStoredImage(session.ActiveProject, stored.relativePath); if (stored.texture != null) Destroy(stored.texture); }
-                viewer?.Unload();
-                try { repository.SaveProject(blank); } catch (Exception saveException) { Debug.LogException(saveException); }
-                UpdatePrimaryControls();
-                SetStatus(exception.Message);
+                if (stored != null)
+                {
+                    try { imageStorage.DeleteStoredImage(candidate, stored.relativePath); }
+                    catch (Exception cleanupException) { Debug.LogWarning("ARNav: failed import image cleanup failed: " + cleanupException.Message); }
+                    if (stored.texture != null) Destroy(stored.texture);
+                }
+                error = MapImageStorageService.ToUserFacingError(exception);
+                Debug.LogException(exception);
+                return false;
             }
-            finally
+        }
+
+        private bool TryCommitImageCandidate(MapProjectData candidate, StoredMapImage stored, string oldPath, string displayName, string sourceUri, out string error)
+        {
+            error = null;
+            var projectSaved = false;
+            try
             {
-                if (result.temporary && !string.IsNullOrWhiteSpace(result.sourcePath)) try { if (System.IO.File.Exists(result.sourcePath)) System.IO.File.Delete(result.sourcePath); } catch (Exception cleanupException) { Debug.LogWarning("ARNav: temporary picker file cleanup failed: " + cleanupException.Message); }
+                candidate.sourceImage.fileName = string.IsNullOrWhiteSpace(displayName) ? System.IO.Path.GetFileName(stored.absolutePath) : displayName;
+                candidate.sourceImage.pathReference = stored.relativePath;
+                candidate.sourceImage.originalWidthPixels = stored.width;
+                candidate.sourceImage.originalHeightPixels = stored.height;
+                candidate.sourceImage.format = stored.format;
+                candidate.sourceImage.sha256 = stored.sha256;
+                candidate.sourceImage.sourceByteLength = stored.sourceByteLength;
+                candidate.sourceImage.sourceUri = sourceUri;
+                candidate.sourceImage.importedUtc = DateTime.UtcNow.ToString("o");
+                var importedFloor = candidate.floors != null && candidate.floors.Count > 0 ? candidate.floors[0] : null;
+                if (importedFloor != null)
+                {
+                    importedFloor.sourceAnnotations = new FloorPlanAnnotationData();
+                    importedFloor.rooms.Clear(); importedFloor.walls.Clear(); importedFloor.doors.Clear();
+                }
+                candidate.scaleCalibration = new ScaleCalibrationData();
+                if (candidate.geographicCalibration != null)
+                {
+                    candidate.geographicCalibration.anchors.Clear();
+                    candidate.geographicCalibration.isValid = false;
+                    candidate.geographicCalibration.validationMessage = "Source image changed; recalibration required.";
+                }
+
+                repository.SaveProject(candidate);
+                projectSaved = true;
+                analysisController?.DiscardTransientState();
+                session.Open(candidate, MapSetupState.ImageImported);
+                analysisSessionId = session.SessionId; session.MarkSaved();
+                annotationController?.Initialize(candidate, repository, HandleAnnotationsCommitted);
+                scaleCalibrationController?.Initialize(viewer, scaleCalibrationOverlay, SetExternalStatus);
+                geoCalibrationController?.Initialize(candidate, viewer, geoAnchorOverlay, SetExternalStatus);
+                locationTrackingController?.Initialize(candidate);
+                if (viewer != null) { viewer.Load(stored.texture, stored.width, stored.height); stored.texture = null; } // FloorPlanViewer now owns and releases the texture.
+                else { if (stored.texture != null) Destroy(stored.texture); stored.texture = null; }
+                annotationController?.Refresh();
+                scaleCalibrationController?.ResetPoints();
+                geoCalibrationController?.SetActive(false);
+                UpdateScaleInfo(); UpdateGeoInfo(); UpdatePredictions(); UpdatePrimaryControls();
+                try { imageStorage.DeleteIfObsolete(candidate, oldPath, candidate.sourceImage.pathReference); }
+                catch (Exception cleanupException) { Debug.LogWarning("ARNav: old imported image could not be cleaned up: " + cleanupException.Message); }
+                SetStatus("Import complete. Image: " + candidate.sourceImage.originalWidthPixels + " x " + candidate.sourceImage.originalHeightPixels + ".");
+                AnalyzeFloorPlan(); // Preserve the existing automatic analysis workflow.
+                return true;
             }
+            catch (Exception exception)
+            {
+                if (!projectSaved)
+                {
+                    try { imageStorage.DeleteStoredImage(candidate, stored.relativePath); }
+                    catch (Exception cleanupException) { Debug.LogWarning("ARNav: failed import image cleanup failed: " + cleanupException.Message); }
+                }
+                if (stored.texture != null) Destroy(stored.texture);
+                error = projectSaved ? "The image was saved, but the map view could not be refreshed. Reopen the map to continue." : MapImageStorageService.ToUserFacingError(exception);
+                Debug.LogException(exception);
+                return false;
+            }
+        }
+
+        private void FinishImageImport(ImageImportResult result)
+        {
+            if (result != null && result.temporary && !string.IsNullOrWhiteSpace(result.sourcePath))
+                try { if (System.IO.File.Exists(result.sourcePath)) System.IO.File.Delete(result.sourcePath); }
+                catch (Exception cleanupException) { Debug.LogWarning("ARNav: temporary picker file cleanup failed: " + cleanupException.Message); }
+            CompleteImageImport();
+        }
+
+        private void CompleteImageImport()
+        {
+            importOperationActive = false; processingImageImport = false;
+            if (importButton != null) importButton.interactable = true;
         }
 
         public void LoadStoredImage()
@@ -527,7 +617,19 @@ namespace ARNav.Runtime.App
             if (selectButton != null) selectButton.onClick.AddListener(() => annotationController.SetTool(AnnotationTool.SelectEdit));
             if (undoButton != null) undoButton.onClick.AddListener(annotationController.Undo); if (redoButton != null) redoButton.onClick.AddListener(annotationController.Redo); if (deleteButton != null) deleteButton.onClick.AddListener(annotationController.DeleteSelected); if (finishButton != null) finishButton.onClick.AddListener(annotationController.FinishDraft); if (cancelButton != null) cancelButton.onClick.AddListener(annotationController.CancelDraft); if (confirmGeometryButton != null) confirmGeometryButton.onClick.AddListener(ConfirmGeometry); if (renameButton != null) renameButton.onClick.AddListener(() => annotationController.RenameSelectedRoom(roomNameInput == null ? "" : roomNameInput.text));
         }
+        private void HandleAnalysisProgress(FloorPlanAnalysisStage stage)
+        {
+            switch (stage)
+            {
+                case FloorPlanAnalysisStage.PreparingImage: SetStatus("Preparing image..."); break;
+                case FloorPlanAnalysisStage.DetectingWalls: SetStatus("Detecting walls..."); break;
+                case FloorPlanAnalysisStage.DetectingRoomRegions: SetStatus("Detecting room regions..."); break;
+                case FloorPlanAnalysisStage.GeneratingMapGeometry: SetStatus("Generating map geometry..."); break;
+                case FloorPlanAnalysisStage.Complete: SetStatus("Analysis complete."); break;
+            }
+        }
+        private void HandleAnalysisState(bool analyzing) { if (!analyzing && statusText != null && statusText.text.EndsWith("...", StringComparison.Ordinal)) SetStatus("Analysis stopped."); }
         private void SetStatus(string message) { if (statusText != null) statusText.text = message ?? "Unknown image import error."; Debug.Log("ARNav: " + message); }
-        private void OnDestroy() { if (imageImporter != null) imageImporter.ResultRecovered -= HandleImportResult; if (importButton != null) importButton.onClick.RemoveListener(ImportFloorPlan); if (fitButton != null) fitButton.onClick.RemoveListener(FitView); if (preview3DButton != null) preview3DButton.onClick.RemoveListener(Open3DPreview); if (seedTestButton != null) seedTestButton.onClick.RemoveListener(CreateSeedTestProject); if (seedNavigationButton != null) seedNavigationButton.onClick.RemoveListener(OpenSeedNavigation); if (analyzeButton != null) analyzeButton.onClick.RemoveListener(AnalyzeFloorPlan); if (showOriginalButton != null) showOriginalButton.onClick.RemoveListener(ToggleOriginalImage); if (editMapButton != null) editMapButton.onClick.RemoveListener(ToggleEditorPanel); }
+        private void OnDestroy() { if (analysisController != null) { analysisController.DiscardTransientState(); analysisController.ProgressChanged -= HandleAnalysisProgress; analysisController.AnalysisStateChanged -= HandleAnalysisState; } if (imageImporter != null) imageImporter.ResultRecovered -= HandleImportResult; if (importButton != null) importButton.onClick.RemoveListener(ImportFloorPlan); if (fitButton != null) fitButton.onClick.RemoveListener(FitView); if (preview3DButton != null) preview3DButton.onClick.RemoveListener(Open3DPreview); if (seedTestButton != null) seedTestButton.onClick.RemoveListener(CreateSeedTestProject); if (seedNavigationButton != null) seedNavigationButton.onClick.RemoveListener(OpenSeedNavigation); if (analyzeButton != null) analyzeButton.onClick.RemoveListener(AnalyzeFloorPlan); if (showOriginalButton != null) showOriginalButton.onClick.RemoveListener(ToggleOriginalImage); if (editMapButton != null) editMapButton.onClick.RemoveListener(ToggleEditorPanel); }
     }
 }

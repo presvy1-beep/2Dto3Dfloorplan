@@ -11,12 +11,15 @@ import android.provider.OpenableColumns;
 import com.unity3d.player.UnityPlayer;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 
 /** Small Storage Access Framework bridge. It copies the selected content URI to app cache. */
 public final class ArnavImagePicker {
     public static final int REQUEST_CODE = 47101;
     public static final int EXPORT_REQUEST_CODE = 47102;
+    // Keep native SAF staging aligned with ImageImportLimits.Default (32 MiB).
+    private static final long MAX_IMAGE_BYTES = 32L * 1024L * 1024L;
     private static final String PREFS = "ARNavImagePicker";
     private static final String PENDING_RESPONSE = "pendingResponse";
     private static String unityObjectName;
@@ -136,20 +139,32 @@ public final class ArnavImagePicker {
         }
         String displayName = displayName(resolver, uri);
         String extension = "image/png".equals(mime) || lower(displayName).endsWith(".png") ? ".png" : ".jpg";
-        File output = new File(activity.getCacheDir(), "arnav-picker-" + System.currentTimeMillis() + extension);
+        File output = new File(activity.getCacheDir(), "arnav-picker-" + System.currentTimeMillis() + "-" + java.util.UUID.randomUUID() + extension);
         try {
             InputStream input = resolver.openInputStream(uri);
             if (input == null) { send(activity, errorJson("Could not read the selected document.")); return; }
-            FileOutputStream outputStream = new FileOutputStream(output);
-            byte[] buffer = new byte[8192]; int read;
-            try { while ((read = input.read(buffer)) != -1) outputStream.write(buffer, 0, read); }
-            finally { try { input.close(); } finally { outputStream.close(); } }
+            FileOutputStream outputStream = null;
+            long totalBytes = 0;
+            try {
+                outputStream = new FileOutputStream(output);
+                byte[] buffer = new byte[8192]; int read;
+                while ((read = input.read(buffer)) != -1) {
+                    totalBytes += read;
+                    if (totalBytes > MAX_IMAGE_BYTES) throw new IOException("Image exceeds the supported 32 MB limit.");
+                    outputStream.write(buffer, 0, read);
+                }
+                outputStream.flush();
+            } finally {
+                try { input.close(); }
+                finally { if (outputStream != null) outputStream.close(); }
+            }
             send(activity, "{\"status\":\"success\",\"path\":" + quote(output.getAbsolutePath()) + ",\"sourceUri\":" + quote(uri.toString()) + ",\"displayName\":" + quote(displayName) + ",\"mimeType\":" + quote(mime == null ? "" : mime) + "}");
             android.util.Log.d("ARNavImagePicker", "Copied selected document to app cache");
         } catch (Exception exception) {
             android.util.Log.e("ARNavImagePicker", "Could not copy selected document", exception);
             if (output.exists()) output.delete();
-            send(activity, errorJson("Could not read the selected document."));
+            String message = exception.getMessage();
+            send(activity, errorJson(message != null && message.contains("supported 32 MB limit") ? message : "Could not read the selected image. Check that the file is available and try again."));
         }
     }
 

@@ -48,7 +48,7 @@ namespace ARNav.Runtime.Extraction
             // pixels before component analysis also separates glyph tails that touch
             // a wall, while a small dilation retains the source wall thickness.
             var protectedLines = FindArchitecturalLinePixels(mask, image.width, image.height, region, minDimension);
-            var radius = Mathf.Clamp(Mathf.RoundToInt(minDimension / 500f), 1, 4);
+            var radius = ExtractionMath.Clamp(ExtractionMath.RoundToInt(minDimension / 500f), 1, 4);
             var protectedMask = Dilate(protectedLines, image.width, image.height, region, radius);
             var residual = new bool[mask.Length]; for (var i = 0; i < mask.Length; i++) residual[i] = mask[i] && !protectedMask[i];
 
@@ -71,13 +71,13 @@ namespace ARNav.Runtime.Extraction
                 }
             }
 
-            var glyphMaxDimension = Mathf.Max(18, Mathf.RoundToInt(minDimension * .055f));
+            var glyphMaxDimension = ExtractionMath.Max(18, ExtractionMath.RoundToInt(minDimension * .055f));
             // A single raster glyph can contain many black pixels (especially at
             // display resolutions); cap by compact bounds, not an unrealistically
             // small absolute pixel budget. A short structural stroke still survives
             // because isolated non-glyph candidates are removed only below the
             // separate tiny-component threshold below.
-            var glyphMaxArea = Mathf.Max(120, Mathf.RoundToInt(image.width * image.height * .003f));
+            var glyphMaxArea = ExtractionMath.Max(120, ExtractionMath.RoundToInt(image.width * image.height * .003f));
             foreach (var component in components)
                 component.textCandidate = component.Width <= glyphMaxDimension && component.Height <= glyphMaxDimension && component.pixels.Count <= glyphMaxArea;
 
@@ -98,7 +98,7 @@ namespace ARNav.Runtime.Extraction
                         var gapX = Math.Max(0, Math.Max(a.minX - b.maxX, b.minX - a.maxX) - 1);
                         var verticalOverlap = Math.Max(0, Math.Min(a.maxY, b.maxY) - Math.Max(a.minY, b.minY) + 1);
                         var aligned = verticalOverlap >= Math.Min(a.Height, b.Height) * .35f;
-                        var near = gapX <= Math.Max(a.Height, b.Height) * 1.6f && Mathf.Abs(a.CenterY - b.CenterY) <= Math.Max(a.Height, b.Height) * .7f;
+                        var near = gapX <= Math.Max(a.Height, b.Height) * 1.6f && ExtractionMath.Abs(a.CenterY - b.CenterY) <= Math.Max(a.Height, b.Height) * .7f;
                         if (near && aligned) { visited[j] = true; pending.Enqueue(j); }
                     }
                 }
@@ -106,7 +106,7 @@ namespace ARNav.Runtime.Extraction
                 // Remove groups of two or more glyph-like marks, plus very small
                 // isolated marks. Preserve a short structural stroke when it is large
                 // enough or part of a larger connected wall component.
-                var remove = cluster.Count >= 2 || groupPixels <= Mathf.Max(20, image.width * image.height / 40000);
+                var remove = cluster.Count >= 2 || groupPixels <= ExtractionMath.Max(20, image.width * image.height / 40000);
                 if (!remove) continue;
                 foreach (var c in cluster) { removeComponent[c] = true; textComponents++; removedPixels += components[c].pixels.Count; }
             }
@@ -126,7 +126,7 @@ namespace ARNav.Runtime.Extraction
             // wallRuns remains the lossless cleaned-mask representation. The ordered
             // graph paths are a derived field generated here and therefore survive the
             // extraction save/reload before BUILD 3D sees the project.
-            output.wallPaths = WallPathExtractor.Extract(output.wallRuns, image.width, image.height, out var pathDiagnostics);
+            output.wallPaths = WallPathExtractor.Extract(output.wallRuns, image.width, image.height, out var pathDiagnostics, image.CancellationToken);
             output.wallPathDiagnostics = pathDiagnostics;
             output.wallThreshold = threshold;
             output.textComponentCount = textComponents;
@@ -149,7 +149,7 @@ namespace ARNav.Runtime.Extraction
                     if (x >= region.x + region.width) break; var start = x;
                     while (x + 1 < region.x + region.width && mask[y * width + x + 1]) x++;
                     var end = x; var key = start.ToString() + ":" + end.ToString(); PixelRasterRun run;
-                    if (active.TryGetValue(key, out var prior) && Mathf.Abs(prior.maxY - y) < .01f) { prior.maxY = y + 1; run = prior; }
+                    if (active.TryGetValue(key, out var prior) && ExtractionMath.Abs(prior.maxY - y) < .01f) { prior.maxY = y + 1; run = prior; }
                     else { run = new PixelRasterRun { minX = start, maxX = end + 1, minY = y, maxY = y + 1 }; rectangles.Add(run); }
                     current[key] = run; x++;
                 }
@@ -160,8 +160,8 @@ namespace ARNav.Runtime.Extraction
 
         private static bool[] FindArchitecturalLinePixels(bool[] mask, int width, int height, FloorPlanCropRegion region, int minDimension)
         {
-            var protectedPixels = new bool[mask.Length]; var minLength = Mathf.Max(24, Mathf.RoundToInt(minDimension * .06f));
-            var directions = new[] { new Vector2Int(1, 0), new Vector2Int(0, 1), new Vector2Int(1, 1), new Vector2Int(1, -1) };
+            var protectedPixels = new bool[mask.Length]; var minLength = ExtractionMath.Max(24, ExtractionMath.RoundToInt(minDimension * .06f));
+            var directions = new[] { new ExtractionPoint(1, 0), new ExtractionPoint(0, 1), new ExtractionPoint(1, 1), new ExtractionPoint(1, -1) };
             foreach (var direction in directions)
             {
                 for (var y = region.y; y < region.y + region.height; y++) for (var x = region.x; x < region.x + region.width; x++)
@@ -199,13 +199,13 @@ namespace ARNav.Runtime.Extraction
                 var variance = backgroundCount * (double)foregroundCount * (m0 - m1) * (m0 - m1);
                 if (variance > bestVariance) { bestVariance = variance; threshold = t; }
             }
-            return Mathf.Clamp(threshold, 80, 220);
+            return ExtractionMath.Clamp(threshold, 80, 220);
         }
 
         private static bool TryFindColoredBorderBackground(FloorPlanImageData image, FloorPlanCropRegion region, out Color32 color)
         {
             color = new Color32(); if (image.colorPixels == null) return false;
-            var bins = new Dictionary<int, int>(); var samples = new List<Color32>(); var stride = Mathf.Max(1, Mathf.Min(region.width, region.height) / 500);
+            var bins = new Dictionary<int, int>(); var samples = new List<Color32>(); var stride = ExtractionMath.Max(1, ExtractionMath.Min(region.width, region.height) / 500);
             for (var x = region.x; x < region.x + region.width; x += stride) { samples.Add(image.GetColor(x, region.y)); samples.Add(image.GetColor(x, region.y + region.height - 1)); }
             for (var y = region.y; y < region.y + region.height; y += stride) { samples.Add(image.GetColor(region.x, y)); samples.Add(image.GetColor(region.x + region.width - 1, y)); }
             foreach (var p in samples) { var key = ((p.r >> 4) << 8) | ((p.g >> 4) << 4) | (p.b >> 4); bins.TryGetValue(key, out var count); bins[key] = count + 1; }
@@ -214,7 +214,7 @@ namespace ARNav.Runtime.Extraction
             var r = 0; var g = 0; var b = 0; var n = 0;
             foreach (var p in samples) if ((((p.r >> 4) << 8) | ((p.g >> 4) << 4) | (p.b >> 4)) == best) { r += p.r; g += p.g; b += p.b; n++; }
             color = new Color32((byte)(r / n), (byte)(g / n), (byte)(b / n), 255);
-            return Mathf.Max(color.r, Mathf.Max(color.g, color.b)) - Mathf.Min(color.r, Mathf.Min(color.g, color.b)) >= 28;
+            return ExtractionMath.Max(color.r, ExtractionMath.Max(color.g, color.b)) - ExtractionMath.Min(color.r, ExtractionMath.Min(color.g, color.b)) >= 28;
         }
 
         private static int ColorDistanceSquared(Color32 a, Color32 b) { var r = a.r - b.r; var g = a.g - b.g; var bl = a.b - b.b; return r * r + g * g + bl * bl; }

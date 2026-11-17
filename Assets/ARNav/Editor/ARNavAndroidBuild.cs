@@ -45,6 +45,23 @@ namespace ARNav.Editor
             catch (Exception exception) { Debug.LogException(exception); EditorApplication.Exit(1); }
         }
 
+        /// <summary>Builds the requested APK path with the production scenes in startup order.</summary>
+        public static void BuildRequestedApk()
+        {
+            try
+            {
+                var scenes = new[] { "Assets/ARNav/Scenes/Boot.unity", "Assets/ARNav/Scenes/MapSetup.unity", "Assets/ARNav/Scenes/Navigation.unity" };
+                var output = Path.GetFullPath(Path.Combine("Builds", "arn.apk"));
+                Directory.CreateDirectory(Path.GetDirectoryName(output));
+                var options = new BuildPlayerOptions { scenes = scenes, locationPathName = output, target = BuildTarget.Android, options = BuildOptions.None };
+                var report = BuildPipeline.BuildPlayer(options);
+                var success = report.summary.result == BuildResult.Succeeded && report.summary.totalErrors == 0 && File.Exists(output) && new FileInfo(output).Length > 0;
+                Debug.Log("ARN requested Android APK result: " + report.summary.result + ", errors=" + report.summary.totalErrors + ", warnings=" + report.summary.totalWarnings + ", package=" + PlayerSettings.GetApplicationIdentifier(BuildTargetGroup.Android) + ", apk=" + output);
+                EditorApplication.Exit(success ? 0 : 1);
+            }
+            catch (Exception exception) { Debug.LogException(exception); EditorApplication.Exit(1); }
+        }
+
         /// <summary>Development-only APK that enables the on-device production-pipeline smoke runner.</summary>
         public static void BuildForDeviceSmoke()
         {

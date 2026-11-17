@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using ARNav.Core.Data;
 
 namespace ARNav.Core.Geometry
@@ -26,6 +27,9 @@ namespace ARNav.Core.Geometry
         private sealed class PathSample { public float width, weight; }
 
         public static List<WallPathData> Extract(IList<PixelRasterRun> runs, int width, int height, out WallPathDiagnostics diagnostics)
+        { return Extract(runs, width, height, out diagnostics, CancellationToken.None); }
+
+        public static List<WallPathData> Extract(IList<PixelRasterRun> runs, int width, int height, out WallPathDiagnostics diagnostics, CancellationToken cancellationToken)
         {
             diagnostics = new WallPathDiagnostics();
             var result = new List<WallPathData>();
@@ -34,13 +38,14 @@ namespace ARNav.Core.Geometry
             var mask = new bool[width * height];
             foreach (var run in runs)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (run == null) continue;
                 var x0 = Clamp((int)Math.Floor(run.minX), 0, width); var x1 = Clamp((int)Math.Ceiling(run.maxX), 0, width);
                 var y0 = Clamp((int)Math.Floor(run.minY), 0, height); var y1 = Clamp((int)Math.Ceiling(run.maxY), 0, height);
                 for (var y = y0; y < y1; y++) for (var x = x0; x < x1; x++) mask[y * width + x] = true;
             }
             for (var i = 0; i < mask.Length; i++) if (mask[i]) diagnostics.rawMaskPixels++;
-            var components = FindComponents(mask, width, height);
+            var components = FindComponents(mask, width, height, cancellationToken);
             var samples = new List<PathSample>();
             foreach (var component in components)
                 if (component.Span >= 8 && component.Thickness >= 1f && component.Thickness <= Math.Min(width, height) * .06f)
@@ -56,10 +61,11 @@ namespace ARNav.Core.Geometry
             var eligibleIds = new List<int>();
             for (var c = 0; c < components.Count; c++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var component = components[c];
                 if (component.Span < Math.Max(4f, strokeWidth * 1.5f) || component.pixels.Count < 3) continue;
                 eligibleIds.Add(c);
-                var thinned = Thin(mask, width, component);
+                var thinned = Thin(mask, width, component, cancellationToken);
                 foreach (var p in component.pixels) if (thinned[p]) { skeleton[p] = true; componentIds[p] = c; }
             }
 
@@ -68,9 +74,10 @@ namespace ARNav.Core.Geometry
             // cutoffs removed short but genuine partitions from tall floor plans.
             var branchLimit = Math.Max(3f, strokeWidth * 2.5f);
             branchLimit = Math.Min(branchLimit, minDimension * .015f);
-            PruneShortBranches(skeleton, componentIds, width, height, components, eligibleIds, Math.Max(3, (int)Math.Round(branchLimit)));
+            PruneShortBranches(skeleton, componentIds, width, height, components, eligibleIds, Math.Max(3, (int)Math.Round(branchLimit)), cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             JoinTinyCollinearGaps(skeleton, componentIds, width, height, strokeWidth, diagnostics);
-            var paths = Trace(skeleton, width, height, diagnostics);
+            var paths = Trace(skeleton, width, height, diagnostics, cancellationToken);
             diagnostics.initialPaths = paths.Count;
             diagnostics.pointsBeforeSimplification = CountPoints(paths);
             var tolerance = Math.Max(1.25f, strokeWidth * 1.1f);
@@ -78,6 +85,7 @@ namespace ARNav.Core.Geometry
             var id = 0;
             foreach (var path in paths)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (path.pixels.Count < 2) continue;
                 var simplified = Simplify(path.pixels, width, path.closed, tolerance);
                 var requiredLength = minLength;
@@ -96,11 +104,12 @@ namespace ARNav.Core.Geometry
             return result;
         }
 
-        private static List<Component> FindComponents(bool[] mask, int width, int height)
+        private static List<Component> FindComponents(bool[] mask, int width, int height, CancellationToken token)
         {
             var result = new List<Component>(); var seen = new bool[mask.Length]; var queue = new int[mask.Length];
             for (var seed = 0; seed < mask.Length; seed++)
             {
+                if ((seed & 4095) == 0) token.ThrowIfCancellationRequested();
                 if (!mask[seed] || seen[seed]) continue;
                 var c = new Component(); result.Add(c); var head = 0; var tail = 0; queue[tail++] = seed; seen[seed] = true;
                 while (head < tail)
@@ -120,13 +129,14 @@ namespace ARNav.Core.Geometry
             return result;
         }
 
-        private static bool[] Thin(bool[] source, int width, Component c)
+        private static bool[] Thin(bool[] source, int width, Component c, CancellationToken token)
         {
             var lw = c.Width + 2; var lh = c.Height + 2; var local = new bool[lw * lh];
             foreach (var p in c.pixels) local[(p / width - c.minY + 1) * lw + (p % width - c.minX + 1)] = true;
             var remove = new List<int>(); var changed = true;
             while (changed)
             {
+                token.ThrowIfCancellationRequested();
                 changed = false;
                 for (var phase = 0; phase < 2; phase++)
                 {
@@ -146,10 +156,11 @@ namespace ARNav.Core.Geometry
             return result;
         }
 
-        private static void PruneShortBranches(bool[] skeleton, int[] componentIds, int width, int height, List<Component> components, List<int> ids, int maxLength)
+        private static void PruneShortBranches(bool[] skeleton, int[] componentIds, int width, int height, List<Component> components, List<int> ids, int maxLength, CancellationToken token)
         {
             foreach (var id in ids)
             {
+                token.ThrowIfCancellationRequested();
                 var c=components[id]; var changed=true; var guard=0;
                 while(changed&&guard++<maxLength)
                 {
@@ -204,11 +215,11 @@ namespace ARNav.Core.Geometry
         {var r=new List<int>(4);var x=p%w;var y=p/w;for(var oy=-1;oy<=1;oy++)for(var ox=-1;ox<=1;ox++){if(ox==0&&oy==0)continue;var nx=x+ox;var ny=y+oy;if(nx<0||ny<0||nx>=w||ny>=h)continue;var n=ny*w+nx;if(!s[n])continue;if(ox!=0&&oy!=0&&(s[y*w+nx]||s[ny*w+x]))continue;r.Add(n);}return r;}
         private static int Next(bool[] s,int w,int h,int p,int previous){foreach(var n in Neighbors(s,w,h,p))if(n!=previous)return n;return -1;}
 
-        private static List<TracedPath> Trace(bool[] skeleton,int width,int height,WallPathDiagnostics d)
+        private static List<TracedPath> Trace(bool[] skeleton,int width,int height,WallPathDiagnostics d,CancellationToken token)
         {
             var result=new List<TracedPath>();var used=new HashSet<long>();
-            for(var p=0;p<skeleton.Length;p++)if(skeleton[p]){var ns=Neighbors(skeleton,width,height,p);if(ns.Count==2)continue;foreach(var n in ns){if(used.Contains(EdgeKey(p,n)))continue;var path=new TracedPath();path.pixels.Add(p);var prev=p;var cur=n;used.Add(EdgeKey(prev,cur));path.pixels.Add(cur);var guard=0;while(guard++<skeleton.Length){var near=Neighbors(skeleton,width,height,cur);if(near.Count!=2)break;var next=near[0]==prev?near[1]:near[0];if(used.Contains(EdgeKey(cur,next)))break;used.Add(EdgeKey(cur,next));prev=cur;cur=next;path.pixels.Add(cur);}if(path.pixels.Count>=2)result.Add(path);}}
-            for(var p=0;p<skeleton.Length;p++)if(skeleton[p])foreach(var n in Neighbors(skeleton,width,height,p))if(!used.Contains(EdgeKey(p,n))){var path=new TracedPath{closed=true};path.pixels.Add(p);var prev=p;var cur=n;used.Add(EdgeKey(prev,cur));var guard=0;while(cur!=p&&guard++<skeleton.Length){path.pixels.Add(cur);var near=Neighbors(skeleton,width,height,cur);var next=-1;foreach(var candidate in near)if(candidate!=prev&&!used.Contains(EdgeKey(cur,candidate))){next=candidate;break;}if(next<0)break;used.Add(EdgeKey(cur,next));prev=cur;cur=next;}if(cur==p)path.pixels.Add(p);else path.closed=false;if(path.pixels.Count>=3)result.Add(path);}
+            for(var p=0;p<skeleton.Length;p++)if(skeleton[p]){if((p&4095)==0)token.ThrowIfCancellationRequested();var ns=Neighbors(skeleton,width,height,p);if(ns.Count==2)continue;foreach(var n in ns){if(used.Contains(EdgeKey(p,n)))continue;var path=new TracedPath();path.pixels.Add(p);var prev=p;var cur=n;used.Add(EdgeKey(prev,cur));path.pixels.Add(cur);var guard=0;while(guard++<skeleton.Length){if((guard&4095)==0)token.ThrowIfCancellationRequested();var near=Neighbors(skeleton,width,height,cur);if(near.Count!=2)break;var next=near[0]==prev?near[1]:near[0];if(used.Contains(EdgeKey(cur,next)))break;used.Add(EdgeKey(cur,next));prev=cur;cur=next;path.pixels.Add(cur);}if(path.pixels.Count>=2)result.Add(path);}}
+            for(var p=0;p<skeleton.Length;p++)if(skeleton[p]){if((p&4095)==0)token.ThrowIfCancellationRequested();foreach(var n in Neighbors(skeleton,width,height,p))if(!used.Contains(EdgeKey(p,n))){var path=new TracedPath{closed=true};path.pixels.Add(p);var prev=p;var cur=n;used.Add(EdgeKey(prev,cur));var guard=0;while(cur!=p&&guard++<skeleton.Length){if((guard&4095)==0)token.ThrowIfCancellationRequested();path.pixels.Add(cur);var near=Neighbors(skeleton,width,height,cur);var next=-1;foreach(var candidate in near)if(candidate!=prev&&!used.Contains(EdgeKey(cur,candidate))){next=candidate;break;}if(next<0)break;used.Add(EdgeKey(cur,next));prev=cur;cur=next;}if(cur==p)path.pixels.Add(p);else path.closed=false;if(path.pixels.Count>=3)result.Add(path);}}
             return result;
         }
 

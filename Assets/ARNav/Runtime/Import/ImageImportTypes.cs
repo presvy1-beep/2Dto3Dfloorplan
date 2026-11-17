@@ -40,8 +40,10 @@ namespace ARNav.Runtime.Import
         public static ImageImportResult Parse(string responseJson)
         {
             if (string.IsNullOrWhiteSpace(responseJson)) return ImageImportResult.Failure("Android picker returned an empty response.");
-            var response = JsonUtility.FromJson<AndroidImagePickerResponse>(responseJson);
-            if (response == null || response.status == "error") return ImageImportResult.Failure(response == null ? "Android picker returned an invalid response." : response.error);
+            AndroidImagePickerResponse response;
+            try { response = JsonUtility.FromJson<AndroidImagePickerResponse>(responseJson); }
+            catch (Exception) { return ImageImportResult.Failure("Android could not read the selected image. Please select it again."); }
+            if (response == null || response.status == "error") return ImageImportResult.Failure(response == null ? "Android picker returned an invalid response." : string.IsNullOrWhiteSpace(response.error) ? "Android could not read the selected image. Please select it again." : response.error);
             if (response.status == "cancelled") return ImageImportResult.Cancelled();
             if (response.status == "success" && !string.IsNullOrEmpty(response.path)) { var result = ImageImportResult.Success(response.path, response.displayName, response.mimeType, true); result.sourceUri = response.sourceUri; return result; }
             return ImageImportResult.Failure("Android picker did not return a readable image.");
