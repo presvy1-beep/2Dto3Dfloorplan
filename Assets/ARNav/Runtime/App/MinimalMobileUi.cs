@@ -22,6 +22,8 @@ namespace ARNav.Runtime.App
         private Button export3DButton;
         private Button setupImportButton;
         private Text setupImportLabel;
+        private Text statusReadout;
+        private System.Action<string> statusAction;
         private FloorPlanAnalysisController analysis;
         private System.Action<bool> analysisStateAction;
         private Slider angleSlider, scaleSlider;
@@ -59,6 +61,10 @@ namespace ARNav.Runtime.App
             if (analysis != null) { analysisStateAction = analyzing => { if (setupImportLabel != null) setupImportLabel.text = analyzing ? "Cancel analysis" : "Import"; }; analysis.AnalysisStateChanged += analysisStateAction; }
             copy.onClick.AddListener(setup.CopyCurrentJson);
             build.onClick.AddListener(setup.Open3DPreview);
+            CreateButton("Review / Edit", canvas.transform, new Vector2(0.02f, 0.92f), new Vector2(0.21f, 0.98f)).onClick.AddListener(setup.ReviewGeometry);
+            CreateButton("Calibrate Scale", canvas.transform, new Vector2(0.22f, 0.92f), new Vector2(0.44f, 0.98f)).onClick.AddListener(setup.BeginScaleCalibration);
+            CreateButton("Export JSON", canvas.transform, new Vector2(0.45f, 0.92f), new Vector2(0.65f, 0.98f)).onClick.AddListener(setup.ExportCurrentJson);
+            statusReadout = CreateStatusReadout(); statusAction = message => { if (statusReadout != null) statusReadout.text = message; }; setup.StatusChanged += statusAction;
             var location = FindObjectOfType<LocationTrackingController>();
             if (location != null) { location.gameObject.SetActive(true); gps.onClick.AddListener(location.EnableLocation); location.SetMinimalReadout(CreateGpsReadout()); }
             CreateSlider("Angle", controls.transform, new Vector2(0.03f, 0.08f), new Vector2(0.48f, 0.43f), 0.5f, null);
@@ -74,7 +80,7 @@ namespace ARNav.Runtime.App
             var build = CreateButton("BUILD 3D", controls.transform, new Vector2(0.52f, 0.58f), new Vector2(0.76f, 0.94f));
             var gps = CreateButton("GPS", controls.transform, new Vector2(0.79f, 0.58f), new Vector2(0.99f, 0.94f));
             import.onClick.AddListener(() => SceneManager.LoadScene("MapSetup"));
-            copy.onClick.AddListener(CopyActiveJson);
+            copy.onClick.AddListener(navigation.CopyCurrentJson);
             build.onClick.AddListener(navigation.Rebuild);
             gps.onClick.AddListener(navigation.EnableLocation);
             navigation.SetGpsReadout(CreateGpsReadout());
@@ -84,6 +90,8 @@ namespace ARNav.Runtime.App
             export3DButton = CreateButton("EXPORT 3D", canvas.transform, new Vector2(0.20f, 0.92f), new Vector2(0.39f, 0.98f));
             export3DAction = navigation.ExportCurrent3D;
             export3DButton.onClick.AddListener(export3DAction);
+            CreateButton("EXPORT JSON", canvas.transform, new Vector2(0.40f, 0.92f), new Vector2(0.61f, 0.98f)).onClick.AddListener(navigation.ExportCurrentJson);
+            statusReadout = CreateStatusReadout(); statusAction = message => { if (statusReadout != null) statusReadout.text = message; }; navigation.StatusChanged += statusAction;
             export3DButton.interactable = navigation.CanExportCurrentModel;
             exportAvailabilityAction = available => { if (export3DButton != null) export3DButton.interactable = available; };
             navigation.ExportAvailabilityChanged += exportAvailabilityAction;
@@ -105,17 +113,16 @@ namespace ARNav.Runtime.App
             if (export3DButton != null && export3DAction != null) export3DButton.onClick.RemoveListener(export3DAction);
             if (navigation != null && exportAvailabilityAction != null) navigation.ExportAvailabilityChanged -= exportAvailabilityAction;
             if (analysis != null && analysisStateAction != null) analysis.AnalysisStateChanged -= analysisStateAction;
+            if (setup != null && statusAction != null) setup.StatusChanged -= statusAction;
+            if (navigation != null && statusAction != null) navigation.StatusChanged -= statusAction;
         }
 
-        private void CopyActiveJson()
+        private Text CreateStatusReadout()
         {
-            var host = MapSessionHost.Instance;
-            if (host == null || host.Session == null || host.Session.ActiveProject == null || host.Session.ActiveProject.sourceImage == null || string.IsNullOrWhiteSpace(host.Session.ActiveProject.sourceImage.sha256)) return;
-            var json = ARNav.Core.Serialization.MapJsonSerializer.Serialize(host.Session.ActiveProject);
-            if (AndroidDocumentBridge.TryCopyTextAndVerify(json, out var readBack, out var error))
-                Debug.Log("[ARNav][Clipboard] current JSON verified chars=" + readBack.Length + " sha256=" + AndroidDocumentBridge.Sha256(System.Text.Encoding.UTF8.GetBytes(readBack)));
-            else
-                Debug.LogWarning("[ARNav][Clipboard] JSON clipboard readback did not match. error=" + (error ?? "text mismatch"));
+            var go = new GameObject("WorkflowStatus", typeof(RectTransform), typeof(Text)); go.transform.SetParent(canvas.transform, false);
+            var rect = go.GetComponent<RectTransform>(); rect.anchorMin = new Vector2(0.02f, 0.83f); rect.anchorMax = new Vector2(0.98f, 0.91f); rect.offsetMin = rect.offsetMax = Vector2.zero;
+            var label = go.GetComponent<Text>(); label.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"); label.fontSize = 16; label.color = Color.white; label.alignment = TextAnchor.MiddleLeft; label.raycastTarget = false;
+            return label;
         }
 
         private void Hide(params string[] names)

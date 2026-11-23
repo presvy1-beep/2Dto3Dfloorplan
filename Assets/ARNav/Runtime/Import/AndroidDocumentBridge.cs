@@ -29,7 +29,9 @@ namespace ARNav.Runtime.Import
             {
                 using (var picker = new AndroidJavaClass("com.arnav.filepicker.ArnavImagePicker"))
                     readBack = picker.CallStatic<string>("copyTextAndReadBack", text ?? string.Empty);
-                return string.Equals(text ?? string.Empty, readBack ?? string.Empty, StringComparison.Ordinal);
+                if (string.Equals(text ?? string.Empty, readBack ?? string.Empty, StringComparison.Ordinal)) return true;
+                error = "Clipboard verification failed. Export the JSON file instead.";
+                return false;
             }
             catch (Exception exception)
             {
@@ -44,30 +46,45 @@ namespace ARNav.Runtime.Import
                 return false;
             }
 #else
-            GUIUtility.systemCopyBuffer = text ?? string.Empty;
-            readBack = GUIUtility.systemCopyBuffer;
-            return string.Equals(text ?? string.Empty, readBack ?? string.Empty, StringComparison.Ordinal);
+            try
+            {
+                GUIUtility.systemCopyBuffer = text ?? string.Empty;
+                readBack = GUIUtility.systemCopyBuffer;
+                if (string.Equals(text ?? string.Empty, readBack ?? string.Empty, StringComparison.Ordinal)) return true;
+                error = "Clipboard verification failed. Export the JSON file instead.";
+                return false;
+            }
+            catch (Exception exception) { error = exception.Message; return false; }
 #endif
         }
 
         public bool BeginGlbSave(byte[] glb, string suggestedName, Action<bool, string, long> completed, out string error)
+        { return BeginSave(glb, suggestedName, "glb", false, completed, out error); }
+
+        public bool BeginJsonSave(string json, string suggestedName, Action<bool, string, long> completed, out string error)
+        {
+            if (string.IsNullOrWhiteSpace(json)) { error = "JSON data is empty."; return false; }
+            return BeginSave(new UTF8Encoding(false).GetBytes(json), suggestedName, "json", true, completed, out error);
+        }
+
+        private bool BeginSave(byte[] contents, string suggestedName, string extension, bool json, Action<bool, string, long> completed, out string error)
         {
             error = null;
-            if (glb == null || glb.Length < 20) { error = "GLB data is empty or incomplete."; return false; }
-            if (saveCompleted != null) { error = "A model export is already in progress."; return false; }
+            if (contents == null || contents.Length < (json ? 2 : 20)) { error = "Export data is empty or incomplete."; return false; }
+            if (saveCompleted != null) { error = "A document export is already in progress."; return false; }
             try
             {
-                stagingPath = Path.Combine(Application.temporaryCachePath, "arnav-export-" + Guid.NewGuid().ToString("N") + ".glb");
-                File.WriteAllBytes(stagingPath, glb);
+                stagingPath = Path.Combine(Application.temporaryCachePath, "arnav-export-" + Guid.NewGuid().ToString("N") + "." + extension);
+                File.WriteAllBytes(stagingPath, contents);
                 saveCompleted = completed;
 #if UNITY_ANDROID && !UNITY_EDITOR
                 using (var picker = new AndroidJavaClass("com.arnav.filepicker.ArnavImagePicker"))
-                    picker.CallStatic("openGlbSavePicker", gameObject.name, "OnGlbSaveResult", stagingPath, suggestedName);
+                    picker.CallStatic(json ? "openJsonSavePicker" : "openGlbSavePicker", gameObject.name, "OnGlbSaveResult", stagingPath, suggestedName);
                 return true;
 #elif UNITY_EDITOR
-                var path = UnityEditor.EditorUtility.SaveFilePanel("Export 3D model", string.Empty, Path.GetFileNameWithoutExtension(suggestedName), "glb");
+                var path = UnityEditor.EditorUtility.SaveFilePanel(json ? "Export map JSON" : "Export 3D model", string.Empty, Path.GetFileNameWithoutExtension(suggestedName), extension);
                 if (string.IsNullOrEmpty(path)) { Complete(false, "Export cancelled.", 0); return true; }
-                File.WriteAllBytes(path, glb); Complete(true, path, glb.Length); return true;
+                File.WriteAllBytes(path, contents); Complete(true, path, new FileInfo(path).Length); return true;
 #else
                 Complete(false, "The document save picker is configured for Android and Editor only.", 0); return false;
 #endif

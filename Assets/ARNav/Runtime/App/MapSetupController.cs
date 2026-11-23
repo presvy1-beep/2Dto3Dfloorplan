@@ -56,6 +56,7 @@ namespace ARNav.Runtime.App
         private string analysisSessionId;
         private bool importOperationActive;
         private bool processingImageImport;
+        public event Action<string> StatusChanged;
 
         private void Awake()
         {
@@ -184,6 +185,8 @@ namespace ARNav.Runtime.App
             if (annotationEditorPanel.activeSelf) { SetScalePanelVisible(false); SetGeoPanelVisible(false); annotationController?.SetTool(AnnotationTool.SelectEdit); }
             SetStatus(annotationEditorPanel.activeSelf ? "Edit Map: choose a correction tool." : "Map review controls hidden.");
         }
+
+        public void ReviewGeometry() { ToggleEditorPanel(); }
 
         public void CreateSeedTestProject()
         {
@@ -450,18 +453,30 @@ namespace ARNav.Runtime.App
         public void CopyCurrentJson()
         {
             if (session == null || session.ActiveProject == null || session.ActiveProject.floors == null || session.ActiveProject.floors.Count == 0 || session.ActiveProject.floors[0].sourceAnnotations == null)
-            { Debug.LogWarning("[ARNav] Copy JSON requested before a map was analyzed."); return; }
+            { SetStatus("Analyze a floor plan before copying JSON."); return; }
             if (session.ActiveProject.sourceImage == null || string.IsNullOrWhiteSpace(session.ActiveProject.sourceImage.sha256))
-            { Debug.LogWarning("[ARNav] Copy JSON refused: current source identity is missing."); return; }
-            var floor = session.ActiveProject.floors[0];
-            if ((floor.rooms == null || floor.rooms.Count == 0) && !EnsureDevelopmentScale())
-                Debug.LogWarning("[ARNav][Clipboard] Could not derive metre geometry; copying current image annotations only.");
+            { SetStatus("Current map has no source identity. Import an image first."); return; }
             var json = MapJsonSerializer.Serialize(session.ActiveProject);
             if (AndroidDocumentBridge.TryCopyTextAndVerify(json, out var readBack, out var error))
-                Debug.Log("[ARNav][Clipboard] Complete current map JSON verified chars=" + readBack.Length + " sha256=" + AndroidDocumentBridge.Sha256(System.Text.Encoding.UTF8.GetBytes(readBack)));
+                SetStatus("Map JSON copied (" + readBack.Length + " characters).");
             else
-                Debug.LogWarning("[ARNav][Clipboard] JSON clipboard readback did not match. error=" + (error ?? "text mismatch"));
+                SetStatus("Copy JSON failed: " + (error ?? "clipboard did not match") + " Use Export JSON.");
         }
+
+        public void ExportCurrentJson()
+        {
+            if (session == null || session.ActiveProject == null || session.ActiveProject.sourceImage == null ||
+                string.IsNullOrWhiteSpace(session.ActiveProject.sourceImage.sha256))
+            { SetStatus("Import and analyze a floor plan before exporting JSON."); return; }
+            var bridge = GetComponent<AndroidDocumentBridge>() ?? gameObject.AddComponent<AndroidDocumentBridge>();
+            var name = "FloorPlan_" + session.ActiveProject.projectId + ".json";
+            var json = MapJsonSerializer.Serialize(session.ActiveProject);
+            SetStatus("Choose where to save the map JSON...");
+            if (!bridge.BeginJsonSave(json, name, OnJsonSaveCompleted, out var error)) SetStatus("Export JSON failed: " + error);
+        }
+
+        private void OnJsonSaveCompleted(bool success, string destination, long bytes)
+        { SetStatus(success ? "Map JSON saved (" + bytes + " bytes)." : destination == "Export cancelled." ? "JSON export cancelled." : "Export JSON failed: " + destination); }
 
         private bool EnsureDevelopmentScale()
         {
@@ -629,7 +644,7 @@ namespace ARNav.Runtime.App
             }
         }
         private void HandleAnalysisState(bool analyzing) { if (!analyzing && statusText != null && statusText.text.EndsWith("...", StringComparison.Ordinal)) SetStatus("Analysis stopped."); }
-        private void SetStatus(string message) { if (statusText != null) statusText.text = message ?? "Unknown image import error."; Debug.Log("ARNav: " + message); }
+        private void SetStatus(string message) { if (statusText != null) statusText.text = message ?? "Unknown image import error."; StatusChanged?.Invoke(message); Debug.Log("ARNav: " + message); }
         private void OnDestroy() { if (analysisController != null) { analysisController.DiscardTransientState(); analysisController.ProgressChanged -= HandleAnalysisProgress; analysisController.AnalysisStateChanged -= HandleAnalysisState; } if (imageImporter != null) imageImporter.ResultRecovered -= HandleImportResult; if (importButton != null) importButton.onClick.RemoveListener(ImportFloorPlan); if (fitButton != null) fitButton.onClick.RemoveListener(FitView); if (preview3DButton != null) preview3DButton.onClick.RemoveListener(Open3DPreview); if (seedTestButton != null) seedTestButton.onClick.RemoveListener(CreateSeedTestProject); if (seedNavigationButton != null) seedNavigationButton.onClick.RemoveListener(OpenSeedNavigation); if (analyzeButton != null) analyzeButton.onClick.RemoveListener(AnalyzeFloorPlan); if (showOriginalButton != null) showOriginalButton.onClick.RemoveListener(ToggleOriginalImage); if (editMapButton != null) editMapButton.onClick.RemoveListener(ToggleEditorPanel); }
     }
 }

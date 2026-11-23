@@ -63,13 +63,21 @@ public final class ArnavImagePicker {
     }
 
     public static void openGlbSavePicker(String objectName, String methodName, String sourcePath, String suggestedName) {
+        openDocumentSavePicker(objectName, methodName, sourcePath, suggestedName, "model/gltf-binary");
+    }
+
+    public static void openJsonSavePicker(String objectName, String methodName, String sourcePath, String suggestedName) {
+        openDocumentSavePicker(objectName, methodName, sourcePath, suggestedName, "application/json");
+    }
+
+    private static void openDocumentSavePicker(String objectName, String methodName, String sourcePath, String suggestedName, String mimeType) {
         Activity activity = UnityPlayer.currentActivity;
         exportObjectName = objectName;
         exportMethodName = methodName;
         exportSourcePath = sourcePath;
         Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("model/gltf-binary");
+        intent.setType(mimeType);
         intent.putExtra(Intent.EXTRA_TITLE, suggestedName);
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
         try { activity.startActivityForResult(intent, EXPORT_REQUEST_CODE); }
@@ -108,13 +116,15 @@ public final class ArnavImagePicker {
     private static void writeExport(Activity activity, Uri uri) {
         long bytesCopied = 0;
         try {
-            if (exportSourcePath == null) throw new IllegalStateException("GLB staging file is unavailable.");
+            if (exportSourcePath == null) throw new IllegalStateException("Export staging file is unavailable.");
+            long expectedBytes = new File(exportSourcePath).length();
             InputStream input = new java.io.FileInputStream(exportSourcePath);
             java.io.OutputStream output = activity.getContentResolver().openOutputStream(uri, "w");
             if (output == null) { input.close(); throw new IllegalStateException("Could not open destination document."); }
             byte[] buffer = new byte[32768]; int read;
             try { while ((read = input.read(buffer)) != -1) { output.write(buffer, 0, read); bytesCopied += read; } output.flush(); }
             finally { try { input.close(); } finally { output.close(); } }
+            if (bytesCopied != expectedBytes) throw new IOException("Export byte count mismatch: wrote " + bytesCopied + " of " + expectedBytes + ".");
             sendExport(activity, "{\"status\":\"success\",\"uri\":" + quote(uri.toString()) + ",\"bytes\":" + bytesCopied + "}");
         } catch (Exception exception) {
             android.util.Log.e("ARNavImagePicker", "Could not write GLB document", exception);

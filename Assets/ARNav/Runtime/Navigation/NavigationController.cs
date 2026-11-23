@@ -74,6 +74,7 @@ namespace ARNav.Runtime.Navigation
         public RuntimeNavMeshState NavMeshState { get { return navMeshBuilder == null ? RuntimeNavMeshState.NotBuilt : navMeshBuilder.State; } }
         public bool CanExportCurrentModel { get { return exportAvailable && generator != null && project != null && project.sourceImage != null && generator.GeneratedRoot != null && generator.GeneratedProjectId == project.projectId && generator.GeneratedSourceSha256 == project.sourceImage.sha256; } }
         public event Action<bool> ExportAvailabilityChanged;
+        public event Action<string> StatusChanged;
 
         private void Awake()
         {
@@ -310,7 +311,7 @@ namespace ARNav.Runtime.Navigation
         public void EnableLocation() { locationProvider?.StartProvider(); }
         public void ExportCurrent3D()
         {
-            if (!CanExportCurrentModel) { Debug.LogWarning("[ARNav][Export] Refused: generated model does not match the current project/source session."); return; }
+            if (!CanExportCurrentModel) { SetStatus("Generate a current 3D model before exporting GLB."); return; }
             if (!RuntimeGlbExporter.TryExport(generator.GeneratedRoot, out var exported, out var error)) { SetStatus("3D export failed: " + error); return; }
             if (documentBridge == null) documentBridge = gameObject.GetComponent<AndroidDocumentBridge>() ?? gameObject.AddComponent<AndroidDocumentBridge>();
             var sourceName = project.sourceImage.fileName;
@@ -319,14 +320,36 @@ namespace ARNav.Runtime.Navigation
             foreach (var invalid in System.IO.Path.GetInvalidFileNameChars()) sourceName = sourceName.Replace(invalid, '_');
             var fileName = "ARNav_" + sourceName + ".glb";
             Debug.Log("[ARNav][Export] Generated GLB bytes=" + exported.bytes.Length + " meshes=" + exported.meshCount + " vertices=" + exported.vertexCount + " triangles=" + exported.triangleCount + " project=" + generator.GeneratedProjectId + " sha256=" + generator.GeneratedSourceSha256);
-            if (!documentBridge.BeginGlbSave(exported.bytes, fileName, OnGlbSaveCompleted, out error)) SetStatus("Could not open Android save workflow: " + error);
+            SetStatus("Choose where to save the GLB model...");
+            if (!documentBridge.BeginGlbSave(exported.bytes, fileName, OnGlbSaveCompleted, out error)) SetStatus("GLB export failed: " + error);
         }
 
         private void OnGlbSaveCompleted(bool success, string destination, long bytes)
         {
-            if (success) { Debug.Log("[ARNav][Export] GLB saved bytes=" + bytes + " destination=" + destination); SetStatus("3D model exported."); }
-            else if (destination != "Export cancelled.") { Debug.LogWarning("[ARNav][Export] Save failed: " + destination); SetStatus("3D export failed."); }
+            if (success) { Debug.Log("[ARNav][Export] GLB saved bytes=" + bytes + " destination=" + destination); SetStatus("3D model saved (" + bytes + " bytes)."); }
+            else { Debug.LogWarning("[ARNav][Export] Save failed: " + destination); SetStatus(destination == "Export cancelled." ? "GLB export cancelled." : "GLB export failed: " + destination); }
         }
+
+        public void CopyCurrentJson()
+        {
+            if (project == null) { SetStatus("No map JSON is available."); return; }
+            var json = ARNav.Core.Serialization.MapJsonSerializer.Serialize(project);
+            SetStatus(AndroidDocumentBridge.TryCopyTextAndVerify(json, out var readBack, out var error)
+                ? "Map JSON copied (" + readBack.Length + " characters)."
+                : "Copy JSON failed: " + (error ?? "clipboard did not match") + " Use Export JSON.");
+        }
+
+        public void ExportCurrentJson()
+        {
+            if (project == null) { SetStatus("No map JSON is available."); return; }
+            if (documentBridge == null) documentBridge = gameObject.GetComponent<AndroidDocumentBridge>() ?? gameObject.AddComponent<AndroidDocumentBridge>();
+            var json = ARNav.Core.Serialization.MapJsonSerializer.Serialize(project);
+            SetStatus("Choose where to save the map JSON...");
+            if (!documentBridge.BeginJsonSave(json, "FloorPlan_" + project.projectId + ".json", OnJsonSaveCompleted, out var error)) SetStatus("Export JSON failed: " + error);
+        }
+
+        private void OnJsonSaveCompleted(bool success, string destination, long bytes)
+        { SetStatus(success ? "Map JSON saved (" + bytes + " bytes)." : destination == "Export cancelled." ? "JSON export cancelled." : "Export JSON failed: " + destination); }
 
         private void SetExportAvailability(bool available)
         { exportAvailable = available; ExportAvailabilityChanged?.Invoke(CanExportCurrentModel); }
@@ -547,7 +570,7 @@ namespace ARNav.Runtime.Navigation
         private static Material CreateLineMaterial(Color color) { var shader = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("UI/Default") ?? Shader.Find("Sprites/Default"); if (shader == null) throw new InvalidOperationException("No runtime-compatible line shader is available."); var material = new Material(shader); material.color = color; return material; }
         private static Material CreateLineMaterial() { return CreateLineMaterial(Color.cyan); }
         private LocalPoint ReadManualStart() { if (startXInput != null && startZInput != null && float.TryParse(startXInput.text, NumberStyles.Float, CultureInfo.InvariantCulture, out var x) && float.TryParse(startZInput.text, NumberStyles.Float, CultureInfo.InvariantCulture, out var z)) return new LocalPoint(x, z); return new LocalPoint(0, 0); }
-        private void SetStatus(string message) { if (statusText != null) statusText.text = message; Debug.Log("ARNav: " + message); }
+        private void SetStatus(string message) { if (statusText != null) statusText.text = message; StatusChanged?.Invoke(message); Debug.Log("ARNav: " + message); }
         private static void DestroyObject(UnityEngine.Object value) { if (value == null) return; if (Application.isPlaying) Destroy(value); else DestroyImmediate(value); }
         private void OnDestroy() { if (locationProvider != null) { locationProvider.ReadingReceived -= OnLocationReading; locationProvider.StatusChanged -= OnLocationStatus; locationProvider.StopProvider(); } ClearRoute(); if (networkMaterial != null) DestroyObject(networkMaterial); if (navMeshBuilder != null) navMeshBuilder.Clear(); if (generator != null) generator.ClearGeneratedBuilding(); if (navigationRoot != null) DestroyObject(navigationRoot); if (startRouteButton != null) startRouteButton.onClick.RemoveListener(StartRoute); if (clearRouteButton != null) clearRouteButton.onClick.RemoveListener(ClearRoute); if (rebuildButton != null) rebuildButton.onClick.RemoveListener(Rebuild); if (fitButton != null) fitButton.onClick.RemoveListener(FitBuilding); if (backButton != null) backButton.onClick.RemoveListener(BackToSetup); if (enableLocationButton != null) enableLocationButton.onClick.RemoveListener(EnableLocation); if (developmentRouteButton != null) developmentRouteButton.onClick.RemoveListener(StartDevelopmentRoute); }
     }
