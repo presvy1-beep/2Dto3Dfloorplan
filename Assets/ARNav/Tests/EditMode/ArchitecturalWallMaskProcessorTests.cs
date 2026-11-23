@@ -61,6 +61,24 @@ namespace ARNav.Tests.EditMode
         }
 
         [Test]
+        public void DetachedFurnitureOutlinesAreExcludedButBalconyWallRemains()
+        {
+            const int width = 320, height = 240;
+            var pixels = new byte[width * height];
+            for (var i = 0; i < pixels.Length; i++) pixels[i] = 255;
+            DrawRect(pixels, width, height, 75, 20, 300, 220, 5);
+            DrawRect(pixels, width, height, 130, 90, 200, 135, 2);
+            DrawRect(pixels, width, height, 20, 55, 72, 205, 3);
+
+            var data = new FloorPlanAnnotationData();
+            ArchitecturalWallMaskProcessor.Process(new FloorPlanImageData(width, height, pixels), FloorPlanCropRegion.Full(width, height), data);
+            var mask = ToMask(data, width, height);
+            Assert.IsTrue(mask[20 * width + 180], "The principal exterior wall must remain.");
+            Assert.IsTrue(mask[120 * width + 20], "A detached but substantial balcony perimeter must remain.");
+            Assert.IsFalse(mask[90 * width + 160], "A compact detached furniture outline must not be a wall.");
+        }
+
+        [Test]
         public void ComplexRasterWallMaskIsSplitBelowUnityUiVertexLimit()
         {
             const int test2RunCount = 16460;

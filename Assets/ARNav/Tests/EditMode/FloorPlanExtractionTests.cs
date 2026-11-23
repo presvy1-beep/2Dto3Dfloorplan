@@ -25,6 +25,90 @@ namespace ARNav.Tests.EditMode
         }
 
         [Test]
+        public void PartialPartitionDoesNotBecomeAFullSpanGridWall()
+        {
+            const int width = 240, height = 200;
+            var pixels = new byte[width * height];
+            for (var i = 0; i < pixels.Length; i++) pixels[i] = 255;
+            for (var x = 20; x <= 220; x++) { pixels[20 * width + x] = 0; pixels[180 * width + x] = 0; }
+            for (var y = 20; y <= 180; y++) { pixels[y * width + 20] = 0; pixels[y * width + 220] = 0; }
+            for (var y = 20; y <= 130; y++) pixels[y * width + 120] = 0;
+
+            var result = new SimpleFloorPlanExtractor().Extract(new FloorPlanImageData(width, height, pixels), FloorPlanCropRegion.Full(width, height));
+            Assert.IsTrue(result.succeeded, result.message);
+            Assert.IsFalse(result.annotations.walls.Exists(w =>
+                Math.Abs(w.start.x - 120) < 3 && Math.Abs(w.end.x - 120) < 3 &&
+                Math.Abs(w.end.y - w.start.y) > 140),
+                "The 50-pixel opening below the partition must not be filled by the clean-grid shortcut.");
+        }
+
+        [Test]
+        public void DocumentSidebarRulesAreExcludedFromBuildingGeometry()
+        {
+            const int width = 300, height = 400;
+            var pixels = new byte[width * height];
+            for (var i = 0; i < pixels.Length; i++) pixels[i] = 255;
+            foreach (var x in new[] { 3, 18, 210, 225, 240, 299 })
+                for (var y = 0; y < height; y++) pixels[y * width + x] = 0;
+            for (var x = 40; x <= 200; x++) { pixels[30 * width + x] = 0; pixels[370 * width + x] = 0; }
+            for (var y = 30; y <= 370; y++) { pixels[y * width + 40] = 0; pixels[y * width + 200] = 0; }
+            for (var y = 30; y <= 190; y++) pixels[y * width + 110] = 0;
+
+            var result = new SimpleFloorPlanExtractor().Extract(new FloorPlanImageData(width, height, pixels), FloorPlanCropRegion.Full(width, height));
+            Assert.IsTrue(result.succeeded, result.message);
+            Assert.GreaterOrEqual(result.analyzedRegion.x, 21);
+            Assert.LessOrEqual(result.analyzedRegion.x + result.analyzedRegion.width, 215);
+            Assert.IsFalse(result.annotations.wallRuns.Exists(run => run.minX >= 220),
+                "The title block must not be serialized as a building wall.");
+        }
+
+        [Test]
+        public void ExteriorDoorGapKeepsInteriorFloorWithoutClosingWallOpening()
+        {
+            const int width = 250, height = 200;
+            var pixels = new byte[width * height];
+            for (var i = 0; i < pixels.Length; i++) pixels[i] = 255;
+            for (var x = 25; x <= 225; x++) { pixels[20 * width + x] = 0; pixels[180 * width + x] = 0; }
+            for (var y = 20; y <= 180; y++)
+            {
+                if (y < 80 || y > 120) pixels[y * width + 25] = 0;
+                pixels[y * width + 225] = 0;
+            }
+
+            var result = new SimpleFloorPlanExtractor().Extract(new FloorPlanImageData(width, height, pixels), FloorPlanCropRegion.Full(width, height));
+            Assert.IsTrue(result.succeeded, result.message);
+            Assert.IsTrue(result.annotations.rooms.Exists(room => room.walkable && room.rasterRuns.Count > 0),
+                "An exterior door must not make the whole interior an unwalkable void.");
+            Assert.IsFalse(result.annotations.wallRuns.Exists(run =>
+                run.minX <= 25 && run.maxX > 25 && run.minY <= 100 && run.maxY > 100),
+                "The classification bridge must not close the physical wall opening.");
+        }
+
+        [Test]
+        public void OpenExteriorUsesClearlyLabeledEstimatedFloor()
+        {
+            const int width = 280, height = 220;
+            var pixels = new byte[width * height];
+            for (var i = 0; i < pixels.Length; i++) pixels[i] = 255;
+            for (var x = 30; x <= 250; x++) { pixels[25 * width + x] = 0; pixels[195 * width + x] = 0; }
+            for (var y = 25; y <= 195; y++)
+            {
+                if (y < 70 || y > 150) pixels[y * width + 30] = 0;
+                if (y < 70 || y > 150) pixels[y * width + 250] = 0;
+            }
+
+            var result = new SimpleFloorPlanExtractor().Extract(new FloorPlanImageData(width, height, pixels), FloorPlanCropRegion.Full(width, height));
+            Assert.IsTrue(result.succeeded, result.message);
+            var floor = result.annotations.rooms.Find(room => room.regionType == "EstimatedInterior");
+            Assert.IsNotNull(floor, "Open boundaries still need a reviewable floor preview.");
+            Assert.IsTrue(floor.walkable);
+            Assert.IsTrue(floor.preferRasterGeometry);
+            Assert.Less(floor.detectionConfidence, .5f);
+            Assert.IsTrue(result.message.Contains("estimated"));
+            Assert.IsFalse(floor.rasterRuns.Exists(run => run.minX < 30 || run.maxX > 251));
+        }
+
+        [Test]
         public void CropCoordinatesRemainOriginalImageCoordinates()
         {
             const int width = 300, height = 200;

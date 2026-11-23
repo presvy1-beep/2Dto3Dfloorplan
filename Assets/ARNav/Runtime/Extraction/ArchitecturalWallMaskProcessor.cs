@@ -117,6 +117,7 @@ namespace ARNav.Runtime.Extraction
                 mask[pixel] = false;
                 if (diagnosticMasks != null) diagnosticMasks.textExclusionMask[pixel] = 255;
             }
+            RemoveDetachedDrawingDetails(mask, image.width, region);
             if (diagnosticMasks != null)
             {
                 diagnosticMasks.architecturalWallMask = new byte[mask.Length];
@@ -127,6 +128,15 @@ namespace ARNav.Runtime.Extraction
             // graph paths are a derived field generated here and therefore survive the
             // extraction save/reload before BUILD 3D sees the project.
             output.wallPaths = WallPathExtractor.Extract(output.wallRuns, image.width, image.height, out var pathDiagnostics, image.CancellationToken);
+            if (output.wallPaths.Count > 100)
+            {
+                // Dense hatched drawings produce hundreds of tiny vector fragments.
+                // Their source pixels remain in wallRuns for editing, but they should
+                // not each become a separate full-height 3D stroke.
+                var minimumModelPath = minDimension * .03f;
+                output.wallPaths.RemoveAll(path => PathLength(path) < minimumModelPath);
+                pathDiagnostics.finalPaths = output.wallPaths.Count;
+            }
             output.wallPathDiagnostics = pathDiagnostics;
             output.wallThreshold = threshold;
             output.textComponentCount = textComponents;
@@ -135,6 +145,79 @@ namespace ARNav.Runtime.Extraction
             output.initialBlackPixelCount = initialBlack;
             long kept = 0; foreach (var run in output.wallRuns) kept += (long)(run.maxX - run.minX) * (long)(run.maxY - run.minY);
             output.architecturalWallPixelCount = kept;
+        }
+
+        private static float PathLength(WallPathData path)
+        {
+            if (path == null || path.points == null || path.points.Count < 2) return 0f;
+            var length = 0f;
+            for (var i = 1; i < path.points.Count; i++)
+            {
+                var a = path.points[i - 1]; var b = path.points[i];
+                length += ExtractionMath.Distance(a.x, a.y, b.x, b.y);
+            }
+            return length;
+        }
+
+        private static void RemoveDetachedDrawingDetails(bool[] mask, int width, FloorPlanCropRegion region)
+        {
+            // The glyph pass works on the residual after protecting long lines. A
+            // detached bed, car or table has long outlines, so it survives that pass.
+            // Keep the dominant wall network and sizeable independent structures
+            // (such as balconies); reject compact interior symbols. Thin detached
+            // wall strokes remain eligible when they are clearly elongated.
+            var seen = new bool[mask.Length];
+            var queue = new int[mask.Length];
+            var components = new List<Component>();
+            for (var y = region.y; y < region.y + region.height; y++)
+            for (var x = region.x; x < region.x + region.width; x++)
+            {
+                var seed = y * width + x;
+                if (!mask[seed] || seen[seed]) continue;
+                var component = new Component();
+                var head = 0; var tail = 0;
+                queue[tail++] = seed; seen[seed] = true;
+                while (head < tail)
+                {
+                    var pixel = queue[head++]; var px = pixel % width; var py = pixel / width;
+                    component.pixels.Add(pixel);
+                    component.minX = Math.Min(component.minX, px); component.maxX = Math.Max(component.maxX, px);
+                    component.minY = Math.Min(component.minY, py); component.maxY = Math.Max(component.maxY, py);
+                    for (var oy = -1; oy <= 1; oy++) for (var ox = -1; ox <= 1; ox++)
+                    {
+                        if (ox == 0 && oy == 0) continue;
+                        var nx = px + ox; var ny = py + oy;
+                        if (nx < region.x || ny < region.y || nx >= region.x + region.width || ny >= region.y + region.height) continue;
+                        var next = ny * width + nx;
+                        if (!mask[next] || seen[next]) continue;
+                        seen[next] = true; queue[tail++] = next;
+                    }
+                }
+                components.Add(component);
+            }
+            Component dominant = null;
+            foreach (var component in components)
+                if (dominant == null || component.Width * component.Height > dominant.Width * dominant.Height ||
+                    component.Width * component.Height == dominant.Width * dominant.Height && component.pixels.Count > dominant.pixels.Count)
+                    dominant = component;
+            var largest = dominant == null ? 0 : dominant.pixels.Count;
+            if (largest < 100) return;
+            var minDimension = Math.Min(region.width, region.height);
+            var dominantBoundsArea = dominant.Width * dominant.Height;
+            foreach (var component in components)
+            {
+                if (component == dominant) continue;
+                var longSide = Math.Max(component.Width, component.Height);
+                var shortSide = Math.Min(component.Width, component.Height);
+                var sizeableStructure = longSide >= minDimension * .3f &&
+                    component.Width * component.Height >= dominantBoundsArea * .1f;
+                var closeToNetwork = component.minX <= dominant.maxX + 5 && component.maxX >= dominant.minX - 5 &&
+                    component.minY <= dominant.maxY + 5 && component.maxY >= dominant.minY - 5;
+                var narrowStroke = longSide >= minDimension * .08f &&
+                    longSide >= shortSide * 2.5f && shortSide <= minDimension * .04f && closeToNetwork;
+                if (sizeableStructure || narrowStroke) continue;
+                foreach (var pixel in component.pixels) mask[pixel] = false;
+            }
         }
 
         private static List<PixelRasterRun> BuildRuns(bool[] mask, int width, int height, FloorPlanCropRegion region)

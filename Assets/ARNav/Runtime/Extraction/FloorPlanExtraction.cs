@@ -97,6 +97,8 @@ namespace ARNav.Runtime.Extraction
         {
             var result = new FloorPlanExtractionResult { analyzedRegion = region };
             if (image == null || !region.IsValid(image.width, image.height)) { result.message = "Invalid image or analysis region."; return result; }
+            if (TryCropDocumentSidebar(image, region, out var contentRegion)) region = contentRegion;
+            result.analyzedRegion = region;
             image.ThrowIfCancellationRequested(); image.ReportStage(FloorPlanAnalysisStage.DetectingWalls);
             if (TryGetColouredBorderBackground(image, region, out var backgroundColor, out var backgroundShare))
             {
@@ -135,6 +137,39 @@ namespace ARNav.Runtime.Extraction
             return result;
         }
 
+        private static bool TryCropDocumentSidebar(FloorPlanImageData image, FloorPlanCropRegion region, out FloorPlanCropRegion content)
+        {
+            content = region;
+            if (region.width < 240 || region.height < 300) return false;
+            var columns = new List<int>();
+            for (var x = region.x; x < region.x + region.width; x++)
+            {
+                var dark = 0;
+                for (var y = region.y; y < region.y + region.height; y++) if (image.Get(x, y) < DarkThreshold) dark++;
+                if (dark < region.height * .83f) continue;
+                if (columns.Count == 0 || x - columns[columns.Count - 1] > 3) columns.Add(x);
+            }
+            // A title block has several independent full-height rules just to the
+            // right of the drawing. Require a gap after the building's last wall
+            // before selecting the sidebar; otherwise the exterior wall is clipped.
+            var right = -1;
+            for (var i = 1; i + 2 < columns.Count; i++)
+            {
+                var first = columns[i] - region.x;
+                if (first < region.width * .6f || first > region.width * .85f) continue;
+                if (columns[i] - columns[i - 1] >= region.width * .03f &&
+                    columns[i] - columns[i - 1] <= region.width * .08f &&
+                    columns[i + 2] - columns[i] <= region.width * .1f)
+                { right = columns[i] + Math.Max(3, region.width / 100); break; }
+            }
+            if (right < 0 || right >= region.x + region.width - region.width / 8) return false;
+            var left = region.x;
+            foreach (var x in columns) if (x - region.x < region.width * .08f && x + 3 < right) left = x + 3;
+            if (right - left < region.width * .45f) return false;
+            content = new FloorPlanCropRegion(left, region.y, right - left, region.height);
+            return true;
+        }
+
         // Real architectural sheets rarely have lines spanning the whole crop. This
         // conservative fallback works on a coarse raster: it finds the drawing bounds,
         // extracts long localized line runs (including diagonals), and uses large enclosed
@@ -154,6 +189,12 @@ namespace ARNav.Runtime.Extraction
             }
             result.diagnostics.sourceDrawingPixels = drawingPixels;
             if (maxX < minX || maxY < minY) { result.message = "No architectural drawing pixels were found."; return result; }
+            ArchitecturalWallMaskProcessor.Process(image, region, result.annotations, CaptureDiagnosticMasks ? result.diagnostics : null);
+            var structuralPixels = new bool[image.width * image.height];
+            foreach (var run in result.annotations.wallRuns)
+                for (var py = (int)run.minY; py < (int)run.maxY; py++)
+                    for (var px = (int)run.minX; px < (int)run.maxX; px++)
+                        structuralPixels[py * image.width + px] = true;
             var step = ExtractionMath.Clamp(ExtractionMath.RoundToInt(ExtractionMath.Min(region.width, region.height) / 220f), 2, 6);
             var cols = ExtractionMath.CeilToInt((maxX - minX + 1) / (float)step); var rows = ExtractionMath.CeilToInt((maxY - minY + 1) / (float)step);
             var blocked = new bool[cols * rows];
@@ -171,7 +212,7 @@ namespace ARNav.Runtime.Extraction
                 {
                     var px = minX + gx * step + ox; var py = minY + gy * step + oy; samples++;
                     if (knownBackground.HasValue && IsNearBackground(image.GetColor(px, py), knownBackground.Value)) { background++; continue; }
-                    if (image.Get(px, py) < wallThreshold) wallInk++;
+                    if (structuralPixels[py * image.width + px]) wallInk++;
                 }
                 // The previous 1/3 rule erased single-pixel architectural strokes
                 // during downsampling. A 16% occupancy retains thin walls while
@@ -182,8 +223,13 @@ namespace ARNav.Runtime.Extraction
             result.diagnostics.gridWidth = cols; result.diagnostics.gridHeight = rows; result.diagnostics.blockedCells = blockedCount; result.diagnostics.grayscaleThreshold = wallThreshold;
             result.diagnostics.estimatedWallThicknessPixels = EstimateWallThickness(image, minX, minY, maxX, maxY, knownBackground, wallThreshold);
             image.ThrowIfCancellationRequested(); image.ReportStage(FloorPlanAnalysisStage.DetectingRoomRegions);
+            var boundaryMask = (bool[])blocked.Clone();
+            var bridgeCells = new bool[blocked.Length];
+            if (!knownBackground.HasValue)
+                SealRoomBoundaryGaps(boundaryMask, bridgeCells, cols, rows, ExtractionMath.Max(6, ExtractionMath.RoundToInt(ExtractionMath.Min(region.width, region.height) * .25f / step)));
+            var assignedBridge = new bool[blocked.Length];
             var visited = new bool[blocked.Length]; var minimumCells = ExtractionMath.Max(55, cols * rows / 1800); var regionIndex = 1;
-            for (var gy = 0; gy < rows; gy++) for (var gx = 0; gx < cols; gx++) if (!blocked[gy * cols + gx] && !visited[gy * cols + gx])
+            for (var gy = 0; gy < rows; gy++) for (var gx = 0; gx < cols; gx++) if (!boundaryMask[gy * cols + gx] && !visited[gy * cols + gx])
             {
                 var cells = new List<int>(); var queue = new Queue<int>(); queue.Enqueue(gy * cols + gx); visited[gy * cols + gx] = true; var left = gx; var right = gx; var top = gy; var bottom = gy;
                 while (queue.Count > 0) { var current = queue.Dequeue(); cells.Add(current); var cx = current % cols; var cy = current / cols; left = ExtractionMath.Min(left, cx); right = ExtractionMath.Max(right, cx); top = ExtractionMath.Min(top, cy); bottom = ExtractionMath.Max(bottom, cy); Visit(cx - 1, cy); Visit(cx + 1, cy); Visit(cx, cy - 1); Visit(cx, cy + 1); }
@@ -197,6 +243,17 @@ namespace ARNav.Runtime.Extraction
                 // imply exterior: entrances and raster gaps can connect inside space
                 // to the crop edge. The background colour is the exterior signal.
                 var isVoid = touchesRasterBoundary && !knownBackground.HasValue;
+                if (!isVoid)
+                {
+                    // The temporary bridges are floor openings, not physical walls.
+                    // Assign each bridge to one adjacent interior region so the floor
+                    // stays continuous through exterior and interior doorways.
+                    for (var i = 0; i < cells.Count; i++)
+                    {
+                        var c = cells[i]; var cx = c % cols; var cy = c / cols;
+                        AddBridge(cx - 1, cy); AddBridge(cx + 1, cy); AddBridge(cx, cy - 1); AddBridge(cx, cy + 1);
+                    }
+                }
                 if (!isVoid) interiorCellCount += cells.Count;
                 var room = new RoomAnnotationData { id = "localized_region_" + regionIndex++, displayName = isVoid ? "Uncertain Open Area" : corridor ? "Detected Corridor" : "Detected Room", category = "Detected", regionType = isVoid ? "Void" : corridor ? "Corridor" : "Room", walkable = !isVoid, destinationSelectable = !isVoid && !corridor, detectionConfidence = isVoid ? 0.35f : 0.55f, preferRasterGeometry = true };
                 if (isVoid || room.detectionConfidence < 0.6f) result.uncertainRegionCount++;
@@ -219,21 +276,98 @@ namespace ARNav.Runtime.Extraction
                     for (var loopIndex = 1; loopIndex < loops.Count; loopIndex++) if (Math.Sign(PolygonArea(loops[loopIndex])) != Math.Sign(PolygonArea(loops[0]))) room.holes.Add(new PixelPolygon { vertices = loops[loopIndex] });
                 }
                 result.annotations.rooms.Add(room);
-                void Visit(int nx, int ny) { if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) return; var index = ny * cols + nx; if (blocked[index] || visited[index]) return; visited[index] = true; queue.Enqueue(index); }
+                void Visit(int nx, int ny) { if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) return; var index = ny * cols + nx; if (boundaryMask[index] || visited[index]) return; visited[index] = true; queue.Enqueue(index); }
+                void AddBridge(int nx, int ny) { if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) return; var index = ny * cols + nx; if (!bridgeCells[index] || assignedBridge[index]) return; assignedBridge[index] = true; cells.Add(index); }
             }
             result.diagnostics.extractedComponents = result.annotations.rooms.Count;
             result.diagnostics.exteriorCells = backgroundCellCount;
             result.diagnostics.interiorCells = interiorCellCount;
+            if (!knownBackground.HasValue && !result.annotations.rooms.Exists(room => room.walkable))
+                TryAddEstimatedInterior(result, structuralPixels, image.width, region);
+            result.diagnostics.extractedComponents = result.annotations.rooms.Count;
             image.ReportStage(FloorPlanAnalysisStage.GeneratingMapGeometry);
             AddLocalizedWalls(image, region, minX, minY, maxX, maxY, result.annotations, knownBackground, result.diagnostics.estimatedWallThicknessPixels);
-            ArchitecturalWallMaskProcessor.Process(image, region, result.annotations, CaptureDiagnosticMasks ? result.diagnostics : null);
             MeasureRasterRoomFidelity(image, knownBackground, result.annotations, wallThreshold, result.diagnostics);
             MeasureWallFidelity(image, knownBackground, result.annotations, wallThreshold, result.diagnostics.estimatedWallThicknessPixels, result.diagnostics);
             if (CaptureDiagnosticMasks) CaptureStages(image, minX, minY, maxX, maxY, cols, rows, step, blocked, knownBackground, result.annotations, wallThreshold, result.diagnostics);
             result.succeeded = result.annotations.rooms.Count > 0 || result.annotations.walls.Count > 0;
             result.confidence = result.succeeded ? 0.45f : 0f;
             result.message = result.succeeded ? "Detected localized architectural regions and wall candidates; manual review is required." : "No useful localized architectural geometry was detected.";
+            if (result.annotations.rooms.Exists(room => room.regionType == "EstimatedInterior"))
+                result.message += " Interior floor is estimated from the wall envelope; review its boundary before export.";
             return result;
+        }
+
+        private static void TryAddEstimatedInterior(FloorPlanExtractionResult result, bool[] wallPixels, int imageWidth, FloorPlanCropRegion region)
+        {
+            var minX = region.x + region.width; var minY = region.y + region.height;
+            var maxX = region.x - 1; var maxY = region.y - 1;
+            for (var y = region.y; y < region.y + region.height; y++)
+            for (var x = region.x; x < region.x + region.width; x++) if (wallPixels[y * imageWidth + x])
+            { minX = Math.Min(minX, x); maxX = Math.Max(maxX, x); minY = Math.Min(minY, y); maxY = Math.Max(maxY, y); }
+            var width = maxX - minX + 1; var height = maxY - minY + 1;
+            if (width < region.width * .4f || height < region.height * .4f) return;
+            var left = new int[height]; var right = new int[height];
+            for (var row = 0; row < height; row++)
+            {
+                left[row] = -1; right[row] = -1;
+                var y = minY + row; var first = maxX + 1; var last = minX - 1;
+                for (var x = minX; x <= maxX; x++) if (wallPixels[y * imageWidth + x])
+                { first = Math.Min(first, x); last = Math.Max(last, x); }
+                if (first <= minX + width * .25f && last - first >= width * .35f) left[row] = first;
+                if (last >= maxX - width * .25f && last - first >= width * .35f) right[row] = last;
+            }
+            var room = new RoomAnnotationData { id = "estimated_interior_1", displayName = "Estimated Interior (review)", category = "Detected", regionType = "EstimatedInterior", walkable = true, destinationSelectable = false, detectionConfidence = .25f, preferRasterGeometry = true };
+            for (var row = 0; row < height; row++)
+            {
+                var l = Interpolate(left, row, minX); var r = Interpolate(right, row, maxX);
+                if (r - l < width * .3f) continue;
+                room.rasterRuns.Add(new PixelRasterRun { minX = l, maxX = r + 1, minY = minY + row, maxY = minY + row + 1 });
+            }
+            if (room.rasterRuns.Count < height * .5f) return;
+            room.vertices.AddRange(new[] { new PixelPoint(minX, minY), new PixelPoint(maxX + 1, minY), new PixelPoint(maxX + 1, maxY + 1), new PixelPoint(minX, maxY + 1) });
+            result.annotations.rooms.Add(room);
+            result.uncertainRegionCount++;
+            int Interpolate(int[] values, int at, int fallback)
+            {
+                if (values[at] >= 0) return values[at];
+                var before = at - 1; while (before >= 0 && values[before] < 0) before--;
+                var after = at + 1; while (after < values.Length && values[after] < 0) after++;
+                if (before < 0) return after < values.Length ? values[after] : fallback;
+                if (after >= values.Length) return values[before];
+                return ExtractionMath.RoundToInt(values[before] + (values[after] - values[before]) * (at - before) / (float)(after - before));
+            }
+        }
+
+        private static void SealRoomBoundaryGaps(bool[] mask, bool[] bridges, int cols, int rows, int maxGap)
+        {
+            const int minimumSupport = 8;
+            for (var axis = 0; axis < 2; axis++)
+            {
+                var lineCount = axis == 0 ? cols : rows;
+                var lineLength = axis == 0 ? rows : cols;
+                for (var line = 0; line < lineCount; line++)
+                {
+                    var position = 0;
+                    var previousEnd = -1; var previousLength = 0;
+                    while (position < lineLength)
+                    {
+                        while (position < lineLength && !mask[Index(line, position)]) position++;
+                        if (position >= lineLength) break;
+                        var start = position;
+                        while (position < lineLength && mask[Index(line, position)]) position++;
+                        var length = position - start;
+                        var gap = start - previousEnd;
+                        if (previousEnd >= 0 && previousLength >= minimumSupport && length >= minimumSupport &&
+                            gap > 0 && gap <= maxGap &&
+                            previousLength >= gap * .6f && length >= gap * .6f)
+                            for (var p = previousEnd; p < start; p++) { var index = Index(line, p); mask[index] = true; bridges[index] = true; }
+                        previousEnd = position; previousLength = length;
+                    }
+                    int Index(int fixedPosition, int variablePosition)
+                    { return axis == 0 ? variablePosition * cols + fixedPosition : fixedPosition * cols + variablePosition; }
+                }
+            }
         }
 
         private static List<PixelRasterRun> BuildPixelRuns(List<int> cells, int cols, int step, int originX, int originY, int maxX, int maxY, int imageWidth, int imageHeight)
@@ -357,7 +491,7 @@ namespace ARNav.Runtime.Extraction
 
         private static void AddAxisAlignedOpeningCandidates(FloorPlanImageData image, FloorPlanCropRegion region, Color32 background, FloorPlanAnnotationData annotations)
         {
-            var xs = FindRuns(image, region, true, background); var ys = FindRuns(image, region, false, background);
+            var xs = FindRuns(image, region, true, background, .55f); var ys = FindRuns(image, region, false, background, .55f);
             var minDoor = 8; var maxDoor = ExtractionMath.Max(30, ExtractionMath.RoundToInt(ExtractionMath.Min(region.width, region.height) * .12f)); var candidateIndex = 0;
             for (var i = 0; i < xs.Count; i++)
             {
@@ -714,7 +848,7 @@ namespace ARNav.Runtime.Extraction
             annotations.doors.Add(new DoorAnnotationData { id = "extracted_door_" + annotations.doors.Count, wallId = wall.id, startT = startT, endT = endT });
         }
 
-        private static List<int> FindRuns(FloorPlanImageData image, FloorPlanCropRegion region, bool vertical, Color32? background = null)
+        private static List<int> FindRuns(FloorPlanImageData image, FloorPlanCropRegion region, bool vertical, Color32? background = null, float minimumCoverage = .9f)
         {
             var values = new List<int>(); var limit = vertical ? region.x + region.width : region.y + region.height;
             var start = vertical ? region.x : region.y;
@@ -722,7 +856,10 @@ namespace ARNav.Runtime.Extraction
             {
                 var dark = 0; var span = vertical ? region.height : region.width;
                 for (var i = 0; i < span; i++) { var x = vertical ? p : region.x + i; var y = vertical ? region.y + i : p; if (image.Get(x, y) < DarkThreshold && (!background.HasValue || !IsNearBackground(image.GetColor(x, y), background.Value))) dark++; }
-                if (dark >= span * 0.55f) values.Add(p);
+                // This shortcut creates full-span walls and rectangular rooms. It is
+                // valid only for a near-complete drawing grid; a partial partition
+                // must go through localized extraction so its openings remain open.
+                if (dark >= span * minimumCoverage) values.Add(p);
             }
             var groups = new List<int>();
             for (var i = 0; i < values.Count; i++) { var first = values[i]; var last = first; while (i + 1 < values.Count && values[i + 1] <= last + 3) last = values[++i]; groups.Add((first + last) / 2); }
