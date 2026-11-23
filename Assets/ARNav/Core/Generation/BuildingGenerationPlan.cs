@@ -18,7 +18,7 @@ namespace ARNav.Core.Generation
             foreach (var floor in project.floors)
             {
                 var fp = new FloorGenerationPlan { source = floor }; if (floor == null) { plan.errors.Add("Null floor."); continue; }
-                if (floor.elevationMetres != floor.elevationMetres || float.IsInfinity(floor.elevationMetres)) fp.errors.Add("Floor elevation is invalid.");
+                if (float.IsNaN(floor.elevationMetres) || float.IsInfinity(floor.elevationMetres)) fp.errors.Add("Floor elevation is invalid.");
                 if (floor.rooms != null) foreach (var room in floor.rooms)
                 {
                     // Non-walkable regions describe void/background/unknown space. They

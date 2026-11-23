@@ -6,4 +6,4 @@ The Java processor applies Gaussian blur, Otsu guided black thresholding, morpho
 
 The current classifier assumes structural wall ink is black. It can reject pale walls, including the balcony outlines in the supplied landscape JPEG. It does not reliably distinguish all furniture from short walls; real device visual validation is still required before deleting the legacy extractor. The Editor currently lacks a native OpenCV binary, so image extraction is available only in Android builds. Existing JSON import and 3D generation remain available in the Editor.
 
-Estimated scale defaults to 0.01 metres per image pixel. These dimensions are approximate, not measurements.
+Estimated scale defaults to 0.02 metres per image pixel. These dimensions are approximate, not measurements.

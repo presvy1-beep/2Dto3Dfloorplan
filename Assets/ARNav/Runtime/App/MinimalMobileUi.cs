@@ -84,7 +84,7 @@ namespace ARNav.Runtime.App
             importJson.onClick.AddListener(setup.ImportMapJson);
             exportJson.onClick.AddListener(setup.ExportCurrentJson);
             statusReadout = CreateStatusReadout(); statusAction = message => { if (statusReadout != null) statusReadout.text = message; }; setup.StatusChanged += statusAction;
-            var location = FindObjectOfType<LocationTrackingController>();
+            var location = FindAnyObjectByType<LocationTrackingController>();
             if (location != null) { location.gameObject.SetActive(true); location.SetMinimalReadout(CreateGpsReadout()); }
         }
 
@@ -110,6 +110,7 @@ namespace ARNav.Runtime.App
             CreateButton("Fit", controls.transform, new Vector2(0.485f, 0.08f), new Vector2(0.58f, 0.92f)).onClick.AddListener(navigation.FitBuilding);
             CreateButton("Reset", controls.transform, new Vector2(0.585f, 0.08f), new Vector2(0.75f, 0.92f)).onClick.AddListener(navigation.ResetCamera);
             statusReadout = CreateStatusReadout(); statusAction = message => { if (statusReadout != null) statusReadout.text = message; }; navigation.StatusChanged += statusAction;
+            statusReadout.text = navigation.CurrentStatus ?? string.Empty;
             export3DButton.interactable = navigation.CanExportCurrentModel;
             exportAvailabilityAction = available => { if (export3DButton != null) export3DButton.interactable = available; };
             navigation.ExportAvailabilityChanged += exportAvailabilityAction;

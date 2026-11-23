@@ -242,7 +242,7 @@ namespace ARNav.Runtime.App
 
         public void ImportFloorPlan()
         {
-            if (analysisController != null && analysisController.IsAnalyzing) { analysisController.CancelAnalysis(); SetStatus("Floor-plan analysis cancelled."); return; }
+            if (analysisController != null && analysisController.IsAnalyzing) { analysisController.CancelAnalysis(); SetStatus(string.Empty); return; }
             if (importOperationActive || processingImageImport) { SetStatus("An image import is already in progress."); return; }
             if (imageImporter == null || session == null || session.ActiveProject == null) { SetStatus("Image import is not configured."); return; }
             importOperationActive = true;
@@ -527,10 +527,10 @@ namespace ARNav.Runtime.App
             if (floor.sourceAnnotations == null || floor.sourceAnnotations.rooms == null || floor.sourceAnnotations.rooms.Count == 0) return false;
             if (project.scaleCalibration == null || !project.scaleCalibration.isValid)
             {
-                var first = new PixelPoint(0, 0); var second = new PixelPoint(Mathf.Min(100, image.originalWidthPixels), 0);
-                var calculation = ScaleCalibrationService.Calculate(first, second, Mathf.Min(1f, Mathf.Max(0.001f, second.x - first.x) * 0.01f), image.originalWidthPixels, image.originalHeightPixels);
-                if (!calculation.IsValid) return false;
-                project.scaleCalibration = new ScaleCalibrationData { firstPixel = first, secondPixel = second, knownDistanceMetres = calculation.PixelDistance * 0.01f, pixelDistance = calculation.PixelDistance, metresPerPixel = 0.01f, isValid = true, isEstimated = true, calibratedUtc = DateTime.UtcNow.ToString("o"), validationMessage = "Estimated preview scale; dimensions are not measured." };
+                const float estimatedMetresPerPixel = 0.02f;
+                var pixelDistance = Mathf.Min(100, image.originalWidthPixels);
+                if (pixelDistance <= 0) return false;
+                project.scaleCalibration = new ScaleCalibrationData { firstPixel = new PixelPoint(0, 0), secondPixel = new PixelPoint(pixelDistance, 0), knownDistanceMetres = pixelDistance * estimatedMetresPerPixel, pixelDistance = pixelDistance, metresPerPixel = estimatedMetresPerPixel, isValid = true, isEstimated = true, calibratedUtc = DateTime.UtcNow.ToString("o"), validationMessage = "Estimated scale — dimensions are approximate." };
             }
             if (!PixelToLocalGeometryConverter.TryRegenerate(floor, project.scaleCalibration, image.originalWidthPixels, image.originalHeightPixels, new MapGenerationDefaults(), out var result)) { Debug.LogWarning("[ARNav] Preview scale conversion failed: " + string.Join(" ", result.errors.ToArray())); return false; }
             try { repository.SaveProject(project); session.SetSetupState(MapSetupState.ScaleCalibrated); session.MarkSaved(); } catch (Exception exception) { Debug.LogException(exception); return false; }

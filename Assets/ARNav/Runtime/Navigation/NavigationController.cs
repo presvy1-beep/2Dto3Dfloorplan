@@ -80,6 +80,7 @@ namespace ARNav.Runtime.Navigation
         public RuntimeNavMeshState NavMeshState { get { return navMeshBuilder == null ? RuntimeNavMeshState.NotBuilt : navMeshBuilder.State; } }
         public bool CanExportCurrentModel { get { return exportAvailable && generator != null && project != null && generator.GeneratedRoot != null && generator.GeneratedProjectId == project.projectId && generator.GeneratedSourceSha256 == (project.sourceImage == null ? null : project.sourceImage.sha256); } }
         public event Action<bool> ExportAvailabilityChanged;
+        public string CurrentStatus { get; private set; }
         public event Action<string> StatusChanged;
 
         private void Awake()
@@ -617,7 +618,7 @@ namespace ARNav.Runtime.Navigation
         private static Material CreateLineMaterial(Color color) { var shader = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("UI/Default") ?? Shader.Find("Sprites/Default"); if (shader == null) throw new InvalidOperationException("No runtime-compatible line shader is available."); var material = new Material(shader); material.color = color; return material; }
         private static Material CreateLineMaterial() { return CreateLineMaterial(Color.cyan); }
         private LocalPoint ReadManualStart() { if (startXInput != null && startZInput != null && float.TryParse(startXInput.text, NumberStyles.Float, CultureInfo.InvariantCulture, out var x) && float.TryParse(startZInput.text, NumberStyles.Float, CultureInfo.InvariantCulture, out var z)) return new LocalPoint(x, z); return new LocalPoint(0, 0); }
-        private void SetStatus(string message) { if (statusText != null) statusText.text = message; StatusChanged?.Invoke(message); Debug.Log("ARNav: " + message); }
+        private void SetStatus(string message) { CurrentStatus = message; if (statusText != null) statusText.text = message; StatusChanged?.Invoke(message); Debug.Log("ARNav: " + message); }
         private static void DestroyObject(UnityEngine.Object value) { if (value == null) return; if (Application.isPlaying) Destroy(value); else DestroyImmediate(value); }
         private void OnDestroy() { if (locationProvider != null) { locationProvider.ReadingReceived -= OnLocationReading; locationProvider.StatusChanged -= OnLocationStatus; locationProvider.StopProvider(); } ClearRoute(); if (networkMaterial != null) DestroyObject(networkMaterial); if (navMeshBuilder != null) navMeshBuilder.Clear(); if (generator != null) generator.ClearGeneratedBuilding(); if (navigationRoot != null) DestroyObject(navigationRoot); if (startRouteButton != null) startRouteButton.onClick.RemoveListener(StartRoute); if (clearRouteButton != null) clearRouteButton.onClick.RemoveListener(ClearRoute); if (rebuildButton != null) rebuildButton.onClick.RemoveListener(Rebuild); if (fitButton != null) fitButton.onClick.RemoveListener(FitBuilding); if (backButton != null) backButton.onClick.RemoveListener(BackToSetup); if (enableLocationButton != null) enableLocationButton.onClick.RemoveListener(EnableLocation); if (developmentRouteButton != null) developmentRouteButton.onClick.RemoveListener(StartDevelopmentRoute); }
     }
