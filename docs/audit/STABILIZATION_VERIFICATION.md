@@ -16,13 +16,14 @@
 
 ## Verified
 
-- Unity 6000.6.0f1 Edit Mode: 137 passed, 0 failed, 0 skipped (`Logs/stabilization-editmode-complete.xml`). This includes seven new stabilization cases.
+- Unity 6000.6.0f1 Edit Mode after the final UI readout change: 137 passed, 0 failed, 0 skipped (`Logs/stabilization-editmode-postui.xml`). This includes seven new stabilization cases.
+- Android release APK build from commit `b2a78cb`: succeeded with 0 errors and 24 warnings. `Builds/arn.apk` is 33,471,113 bytes. The manifest has `com.arnav.filepicker.ArnavUnityActivity`, arm64, minimum SDK 26, target SDK 36, and fine/coarse location permissions. A later status-text outline change has Edit Mode coverage but was not included in this APK.
 - Existing tests cover rectangular grids, L/U shapes, doorway gaps, text suppression, wall continuity/junctions, serialization, generation, GLB header/chunks, camera state, and location quality. Test fixtures do not prove arbitrary architectural plans are reconstructed correctly.
 - `git diff --check` found no whitespace errors in changed source.
 
 ## Remaining verification and limits
 
-- The Android save and JSON open pickers require an interactive device run. Java callback state is held in process memory; process death during a picker may lose the result. Export success must be confirmed by opening the saved document in an independent glTF viewer or validator.
+- The Android save and JSON open pickers require an interactive device run. The connected phone disconnected before installation or inspection, and its existing `com.DefaultCompany.arn` installation was untouched. Java callback state is held in process memory; process death during a picker may lose the result. Export success must be confirmed by opening the saved document in an independent glTF viewer or validator.
 - A source image is not embedded in exported JSON. Imported geometry can generate 3D without the image, while pixel-based review requires importing the image separately.
 - Floor-plan extraction remains heuristic and runs substantial raster work on the main thread. Manual correction is still needed for ambiguous symbols, text, and room semantics. The existing image size limit bounds input but does not make all supported images fast on every Android device.
 - `MinimalMobileUi` still overlays authored scene controls. The review and calibration panels are reachable, but a full UI consolidation needs device layout checks and scene-reference review before deleting assets.

@@ -124,7 +124,8 @@ namespace ARNav.Runtime.App
         {
             var go = new GameObject("WorkflowStatus", typeof(RectTransform), typeof(Text)); go.transform.SetParent(canvas.transform, false);
             var rect = go.GetComponent<RectTransform>(); rect.anchorMin = new Vector2(0.02f, 0.83f); rect.anchorMax = new Vector2(0.98f, 0.91f); rect.offsetMin = rect.offsetMax = Vector2.zero;
-            var label = go.GetComponent<Text>(); label.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"); label.fontSize = 16; label.color = Color.white; label.alignment = TextAnchor.MiddleLeft; label.raycastTarget = false;
+            var label = go.GetComponent<Text>(); label.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"); label.fontSize = 16; label.color = Color.white; label.alignment = TextAnchor.MiddleLeft; label.raycastTarget = false; label.text = "Import an image or saved JSON map.";
+            var outline = go.AddComponent<Outline>(); outline.effectColor = Color.black; outline.effectDistance = new Vector2(2f, -2f);
             return label;
         }
 
@@ -150,7 +151,7 @@ namespace ARNav.Runtime.App
         {
             var go = new GameObject("GPSReadout", typeof(RectTransform), typeof(Text)); go.transform.SetParent(canvas.transform, false);
             var rect = go.GetComponent<RectTransform>(); rect.anchorMin = new Vector2(0.64f, 0.67f); rect.anchorMax = new Vector2(0.98f, 0.82f); rect.offsetMin = rect.offsetMax = Vector2.zero;
-            var text = go.GetComponent<Text>(); text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"); text.fontSize = 13; text.color = Color.white; text.alignment = TextAnchor.UpperRight; text.raycastTarget = false; text.text = ""; return text;
+            var text = go.GetComponent<Text>(); text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"); text.fontSize = 13; text.color = Color.white; text.alignment = TextAnchor.UpperRight; text.raycastTarget = false; text.text = "GPS off"; var outline = go.AddComponent<Outline>(); outline.effectColor = Color.black; outline.effectDistance = new Vector2(2f, -2f); return text;
         }
 
         private static Button CreateButton(string label, Transform parent, Vector2 min, Vector2 max)
