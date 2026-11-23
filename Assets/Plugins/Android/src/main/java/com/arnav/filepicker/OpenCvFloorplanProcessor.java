@@ -169,13 +169,18 @@ public final class OpenCvFloorplanProcessor {
             int longSide = Math.max(w, h), shortSide = Math.min(w, h);
             boolean sizeable = longSide >= minimum * .3 && w * h >= dominantBounds * .08;
             boolean nearMain = x <= mainRight + 8 && x + w >= mainLeft - 8 && y <= mainBottom + 8 && y + h >= mainTop - 8;
+            int connectionTolerance = Math.max(12, Math.min(24, minimum / 20));
             boolean connectedAtEnd = w >= h
-                ? touchesDominant(ids, width, height, dominant, x, y + h / 2) || touchesDominant(ids, width, height, dominant, x + w - 1, y + h / 2)
-                : touchesDominant(ids, width, height, dominant, x + w / 2, y) || touchesDominant(ids, width, height, dominant, x + w / 2, y + h - 1);
+                ? touchesDominant(ids, width, height, dominant, x, y + h / 2, connectionTolerance) || touchesDominant(ids, width, height, dominant, x + w - 1, y + h / 2, connectionTolerance)
+                : touchesDominant(ids, width, height, dominant, x + w / 2, y, connectionTolerance) || touchesDominant(ids, width, height, dominant, x + w / 2, y + h - 1, connectionTolerance);
             boolean exteriorEdge = w < h
                 ? Math.abs(x + w / 2 - mainLeft) <= 4 || Math.abs(x + w / 2 - mainRight) <= 4
                 : Math.abs(y + h / 2 - mainTop) <= 4 || Math.abs(y + h / 2 - mainBottom) <= 4;
-            boolean thinWall = longSide >= minimum * .12 && longSide >= shortSide * 3 && shortSide <= minimum * .035 && nearMain &&
+            // A real partition may be disconnected from the perimeter by a door
+            // gap or a scan break. Retain line-like components with an endpoint
+            // close to the dominant structure; isolated furniture strokes remain
+            // excluded by the endpoint/topology requirement.
+            boolean thinWall = longSide >= minimum * .10 && longSide >= shortSide * 4 && shortSide <= minimum * .05 && nearMain &&
                 (connectedAtEnd || exteriorEdge || longSide >= minimum * .3);
             keep[i] = sizeable || thinWall;
         }
@@ -183,9 +188,9 @@ public final class OpenCvFloorplanProcessor {
         return result;
     }
 
-    private static boolean touchesDominant(int[] labels, int width, int height, int dominant, int x, int y) {
-        for (int yy = Math.max(0, y - 10); yy <= Math.min(height - 1, y + 10); yy++)
-            for (int xx = Math.max(0, x - 10); xx <= Math.min(width - 1, x + 10); xx++)
+    private static boolean touchesDominant(int[] labels, int width, int height, int dominant, int x, int y, int radius) {
+        for (int yy = Math.max(0, y - radius); yy <= Math.min(height - 1, y + radius); yy++)
+            for (int xx = Math.max(0, x - radius); xx <= Math.min(width - 1, x + radius); xx++)
                 if (labels[yy * width + xx] == dominant) return true;
         return false;
     }
@@ -217,13 +222,29 @@ public final class OpenCvFloorplanProcessor {
             Rect box = Imgproc.boundingRect(contour);
             boolean stairSized = box.width >= width * .14 && box.height >= Math.max(12, thickness * 5) &&
                 box.width >= box.height * 2.2 && Imgproc.contourArea(contour) >= box.width * box.height * .4;
-            if (stairSized) for (int y = Math.max(0, box.y - thickness); y < Math.min(height, box.y + box.height + thickness); y++) {
+            if (stairSized && hasRepeatedHatchBands(wall, width, box)) for (int y = Math.max(0, box.y - thickness); y < Math.min(height, box.y + box.height + thickness); y++) {
                 if (y <= box.y - thickness + 2 || y >= box.y + box.height + thickness - 3) continue;
                 for (int x = Math.max(0, box.x - thickness); x < Math.min(width, box.x + box.width + thickness); x++)
                     if (x < right - thickness * 2) wall[y * width + x] = 0;
             }
             contour.release();
         }
+    }
+
+    /** Reject dense rectangular stair hatching without erasing a solid wall band. */
+    private static boolean hasRepeatedHatchBands(byte[] wall, int width, Rect box) {
+        int bands = 0, gaps = 0;
+        boolean inBand = false, inGap = false;
+        for (int y = box.y; y < box.y + box.height; y++) {
+            int dark = 0;
+            for (int x = box.x; x < box.x + box.width; x++) if (wall[y * width + x] != 0) dark++;
+            boolean band = dark >= box.width * .62;
+            boolean gap = dark <= box.width * .18;
+            if (band && !inBand) bands++;
+            if (gap && !inGap && bands > 0) gaps++;
+            inBand = band; inGap = gap;
+        }
+        return bands >= 3 && gaps >= 2;
     }
 
     private static void reinforceExteriorBottom(byte[] wall, byte[] raw, int width, int height, int thickness) {
@@ -328,6 +349,7 @@ public final class OpenCvFloorplanProcessor {
                 if (raw[yy * width + xx] != 0) return true;
         return false;
     }
+
     private static int seed(int p, byte[] barrier, boolean[] exterior, int[] queue, int tail) {
         if (barrier[p] == 0 && !exterior[p]) { exterior[p] = true; queue[tail++] = p; }
         return tail;

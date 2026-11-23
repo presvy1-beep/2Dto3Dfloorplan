@@ -135,12 +135,32 @@ namespace ARNav.Tests.EditMode
                 var wallMap = wall.HasProperty("_BaseMap") ? wall.GetTexture("_BaseMap") : wall.GetTexture("_MainTex");
                 Assert.IsNotNull(floorMap); Assert.IsNotNull(wallMap); Assert.AreNotSame(floorMap, wallMap);
                 Assert.AreEqual(TextureWrapMode.Repeat, floorMap.wrapMode); Assert.AreEqual(TextureWrapMode.Repeat, wallMap.wrapMode);
+                Assert.AreEqual("Universal Render Pipeline/Unlit", wall.shader.name, "Wall tint must not depend on scene lighting or the legacy Standard shader.");
+                Assert.AreEqual("Universal Render Pipeline/Unlit", floor.shader.name, "Floor tint must use the supported URP shader.");
                 var floorColor = floor.HasProperty("_BaseColor") ? floor.GetColor("_BaseColor") : floor.color;
                 var wallColor = wall.HasProperty("_BaseColor") ? wall.GetColor("_BaseColor") : wall.color;
                 Assert.That(floorColor.r, Is.GreaterThan(wallColor.r));
                 Assert.That(wallColor.b, Is.GreaterThan(wallColor.r));
             }
             finally { UnityEngine.Object.DestroyImmediate(owner); }
+        }
+
+        [Test]
+        public void LegacyAssignedMaterialCannotOverrideGeneratedWallAppearance()
+        {
+            var standard = Shader.Find("Standard"); Assert.IsNotNull(standard);
+            var legacy = new Material(standard) { color = Color.white };
+            var owner = new GameObject("LegacyMaterialOverrideTest"); var generator = owner.AddComponent<ProceduralBuildingGenerator>();
+            try
+            {
+                typeof(ProceduralBuildingGenerator).GetField("wallMaterial", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(generator, legacy);
+                var generated = (Material)typeof(ProceduralBuildingGenerator).GetMethod("GetWallMaterial", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(generator, null);
+                Assert.AreEqual("Universal Render Pipeline/Unlit", generated.shader.name);
+                Assert.That(generated.GetColor("_BaseColor").r, Is.EqualTo(.34f).Within(.001f));
+                Assert.That(generated.GetColor("_BaseColor").g, Is.EqualTo(.43f).Within(.001f));
+                Assert.That(generated.GetColor("_BaseColor").b, Is.EqualTo(.52f).Within(.001f));
+            }
+            finally { UnityEngine.Object.DestroyImmediate(owner); UnityEngine.Object.DestroyImmediate(legacy); }
         }
 
         private static string MeshHash(GameObject root)

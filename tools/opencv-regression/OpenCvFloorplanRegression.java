@@ -40,6 +40,13 @@ public final class OpenCvFloorplanRegression {
         require(landscape.floor(200, 300), "Landscape living-room floor is missing.");
         require(landscape.floor(183, 130), "Landscape furniture became a wall.");
         require(!landscape.wall(480, 205), "Landscape bathroom doorway was closed.");
+        double landscapeBedroomPartition = lineCoverage(landscape, 475, 274, 602, 274, 2);
+        System.out.println("f1 bedroom partition structural coverage=" + String.format("%.3f", landscapeBedroomPartition));
+        require(landscapeBedroomPartition >= .75,
+                "Landscape bedroom partition was lost even though it is a long architectural wall.");
+        require(lineCoverage(landscape, 429, 207, 464, 207, 2) >= .70,
+                "Landscape bathroom partition was lost before its doorway opening.");
+        require(!landscape.floor(20, 300), "Landscape exterior void became floor occupancy.");
 
         Mask portrait = process(paths[1]);
         require(portrait.width == 477 && portrait.height == 642, "Unexpected portrait fixture dimensions.");
@@ -51,6 +58,11 @@ public final class OpenCvFloorplanRegression {
         require(portrait.floor(80, 550), "Portrait car drawing made a floor hole.");
         require(!portrait.wall(290, 355), "Portrait stair hatch became a solid wall block.");
         require(!portrait.wall(400, 200), "Portrait title block became a wall.");
+        double portraitMainPartition = lineCoverage(portrait, 66, 207, 326, 207, 3);
+        System.out.println("fp2 main internal partition structural coverage=" + String.format("%.3f", portraitMainPartition));
+        require(portraitMainPartition >= .70,
+                "Portrait major internal room partition was lost across its full wall run.");
+        require(!portrait.floor(30, 300), "Portrait page margin became floor occupancy.");
         reproducibility(paths[0], paths[1], paths.length > 2 ? paths[2] : "Logs/opencv-reproducibility.csv");
         System.out.println("OpenCV floorplan regressions and reproducibility checks passed.");
     }
@@ -190,6 +202,23 @@ public final class OpenCvFloorplanRegression {
     }
     private static String sha(byte[] bytes) throws Exception {
         byte[] digest=MessageDigest.getInstance("SHA-256").digest(bytes);StringBuilder out=new StringBuilder();for(byte b:digest)out.append(String.format("%02x",b&255));return out.toString();
+    }
+
+    private static double lineCoverage(Mask mask, int x0, int y0, int x1, int y1, int tolerance) {
+        int length = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));
+        int detected = 0;
+        for (int i = 0; i <= length; i++) {
+            int x = x0 + (x1 - x0) * i / Math.max(1, length);
+            int y = y0 + (y1 - y0) * i / Math.max(1, length);
+            boolean present = false;
+            for (int oy = -tolerance; oy <= tolerance && !present; oy++)
+                for (int ox = -tolerance; ox <= tolerance; ox++) {
+                    int px = x + ox, py = y + oy;
+                    if (px >= 0 && py >= 0 && px < mask.width && py < mask.height && mask.wall(px, py)) { present = true; break; }
+                }
+            if (present) detected++;
+        }
+        return (double) detected / (length + 1);
     }
 
     private static Mask process(String path) throws Exception {

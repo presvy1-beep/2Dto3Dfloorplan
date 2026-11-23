@@ -128,8 +128,14 @@ namespace ARNav.Runtime.Generation
         {
             if (mesh == null) return;
             scale = Mathf.Max(0.001f, scale);
-            var vertices = mesh.vertices; var uv = new Vector2[vertices.Length];
-            for (var i = 0; i < vertices.Length; i++) uv[i] = new Vector2(vertices[i].x / scale, vertices[i].y / scale);
+            var vertices = mesh.vertices; var normals = mesh.normals; var uv = new Vector2[vertices.Length];
+            for (var i = 0; i < vertices.Length; i++)
+            {
+                var normal = i < normals.Length ? normals[i] : Vector3.up;
+                if (Mathf.Abs(normal.y) > 0.5f) uv[i] = new Vector2(vertices[i].x / scale, vertices[i].z / scale);
+                else if (Mathf.Abs(normal.x) > 0.5f) uv[i] = new Vector2(vertices[i].z / scale, vertices[i].y / scale);
+                else uv[i] = new Vector2(vertices[i].x / scale, vertices[i].y / scale);
+            }
             mesh.uv = uv;
         }
         private void AddRasterFallback(FloorGenerationPlan floorPlan, GameObject wallsRoot, List<Mesh> meshes, ref Bounds bounds, ref bool boundsSet)
@@ -141,26 +147,25 @@ namespace ARNav.Runtime.Generation
         private Material GetWallMaterial() { if (runtimeWallMaterial == null) runtimeWallMaterial = wallMaterial != null ? CreateTexturedMaterial(wallMaterial, false) : CreateTexturedMaterial("ARNav Plaster Wall", new Color(0.34f, 0.43f, 0.52f, 1f), false); return runtimeWallMaterial; }
         private Material CreateTexturedMaterial(Material source, bool floor)
         {
-            var material = new Material(source) { name = source.name + (floor ? " (Runtime Tile)" : " (Runtime Plaster)") };
-            var textureProperty = material.HasProperty("_BaseMap") ? "_BaseMap" : material.HasProperty("_MainTex") ? "_MainTex" : null;
-            if (textureProperty != null)
-            {
-                var texture = floor ? (runtimeFloorTexture ?? (runtimeFloorTexture = MakeFloorTexture())) : (runtimeWallTexture ?? (runtimeWallTexture = MakeWallTexture()));
-                material.SetTexture(textureProperty, texture);
-            }
-            return material;
+            // The scene references legacy Standard materials. Treat them only as
+            // assignment markers; the runtime architectural palette is canonical.
+            var tint = floor ? new Color(0.86f, 0.88f, 0.90f, 1f) : new Color(0.34f, 0.43f, 0.52f, 1f);
+            return CreateTexturedMaterial(source.name + (floor ? " (Runtime Tile)" : " (Runtime Plaster)"), tint, floor);
         }
         private Material CreateTexturedMaterial(string name, Color tint, bool floor)
         {
-            var material = CreateMaterial(name, tint);
+            // The scene's serialized materials use Unity's built-in Standard
+            // shader. Preserve their tint, but create the runtime renderer material
+            // with URP Unlit so Android URP cannot silently replace it with white.
+            var shader = Shader.Find("Universal Render Pipeline/Unlit");
+            if (shader == null) throw new InvalidOperationException("URP Unlit shader is unavailable for generated architecture.");
+            var material = new Material(shader) { name = name, enableInstancing = true };
+            if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", tint);
             var textureProperty = material.HasProperty("_BaseMap") ? "_BaseMap" : material.HasProperty("_MainTex") ? "_MainTex" : null;
-            if (textureProperty != null)
-            {
-                var texture = floor ? (runtimeFloorTexture ?? (runtimeFloorTexture = MakeFloorTexture())) : (runtimeWallTexture ?? (runtimeWallTexture = MakeWallTexture()));
-                texture.wrapMode = TextureWrapMode.Repeat;
-                material.SetTexture(textureProperty, texture);
-            }
-            material.enableInstancing = true;
+            if (textureProperty == null) { DestroyObject(material); throw new InvalidOperationException("URP Unlit shader has no supported base texture property."); }
+            var texture = floor ? (runtimeFloorTexture ?? (runtimeFloorTexture = MakeFloorTexture())) : (runtimeWallTexture ?? (runtimeWallTexture = MakeWallTexture()));
+            texture.wrapMode = TextureWrapMode.Repeat;
+            material.SetTexture(textureProperty, texture);
             return material;
         }
         private static Texture2D MakeFloorTexture()
