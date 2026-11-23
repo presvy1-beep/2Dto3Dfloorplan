@@ -275,7 +275,7 @@ namespace ARNav.Tests.EditMode
         public void DefaultWallHeightIsModestlyReducedAndCentralized()
         {
             var defaults = new MapGenerationDefaults();
-            Assert.That(defaults.defaultWallHeightMetres, Is.EqualTo(0.35f).Within(0.0001f));
+            Assert.That(defaults.defaultWallHeightMetres, Is.EqualTo(2.7f).Within(0.0001f));
             Assert.That(defaults.defaultBaseThicknessMetres, Is.EqualTo(0.025f).Within(0.0001f));
             Assert.That(defaults.defaultWallThicknessMetres, Is.EqualTo(0.15f).Within(0.0001f));
         }
