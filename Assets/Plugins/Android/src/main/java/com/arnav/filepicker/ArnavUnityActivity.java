@@ -19,7 +19,7 @@ public class ArnavUnityActivity extends UnityPlayerGameActivity {
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == ArnavImagePicker.REQUEST_CODE || requestCode == ArnavImagePicker.EXPORT_REQUEST_CODE) {
+        if (requestCode == ArnavImagePicker.REQUEST_CODE || requestCode == ArnavImagePicker.EXPORT_REQUEST_CODE || requestCode == ArnavImagePicker.JSON_OPEN_REQUEST_CODE) {
             ArnavImagePicker.handleActivityResult(this, requestCode, resultCode, data);
         }
     }

@@ -87,11 +87,8 @@ namespace ARNav.Runtime.Generation
                 if (wallMesh != null)
                 {
                     meshes.Add(wallMesh); RuntimeMeshFactory.AddMeshObject(wallsRoot, "VectorWallMass", wallMesh, GetWallMaterial(), generateColliders); UpdateBounds(wallMesh.bounds, wallsRoot.transform.localToWorldMatrix, ref bounds, ref boundsSet);
-                    var baseMesh = RuntimeMeshFactory.CreatePresentationBaseMesh(wallMesh.bounds, floorPlan.source.elevationMetres, Mathf.Max(0.005f, baseThicknessMetres));
-                    if (baseMesh != null)
-                    {
-                        meshes.Add(baseMesh); RuntimeMeshFactory.AddMeshObject(wallsRoot, "PresentationBase", baseMesh, GetBaseMaterial(), generateColliders); UpdateBounds(baseMesh.bounds, wallsRoot.transform.localToWorldMatrix, ref bounds, ref boundsSet);
-                    }
+                    // A wall-bounds rectangle fills courtyards, corridors, and exterior
+                    // voids of irregular plans. Room meshes already provide the floor.
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
                     var rawPixels = floorPlan.source.sourceAnnotations == null || floorPlan.source.sourceAnnotations.wallPathDiagnostics == null ? 0 : floorPlan.source.sourceAnnotations.wallPathDiagnostics.rawMaskPixels;
                     var scale = project == null || project.scaleCalibration == null ? 0 : project.scaleCalibration.metresPerPixel;

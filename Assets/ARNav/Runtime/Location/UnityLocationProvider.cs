@@ -41,7 +41,7 @@ namespace ARNav.Runtime.Location
             var info = Input.location.lastData;
             if (info.timestamp <= 0 || Math.Abs(info.timestamp - lastPublishedTimestamp) < 0.0001) return;
             lastPublishedTimestamp = info.timestamp; publishedSampleCount++;
-            LastReading = new LocationReading { latitude = info.latitude, longitude = info.longitude, altitudeMetres = info.altitude, horizontalAccuracyMetres = info.horizontalAccuracy, verticalAccuracyMetres = info.verticalAccuracy, timestampUnixSeconds = info.timestamp, receivedUnixSeconds = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0, isValid = true };
+            LastReading = new LocationReading { latitude = info.latitude, longitude = info.longitude, altitudeMetres = info.verticalAccuracy > 0 ? info.altitude : double.NaN, horizontalAccuracyMetres = info.horizontalAccuracy, verticalAccuracyMetres = info.verticalAccuracy, timestampUnixSeconds = info.timestamp, receivedUnixSeconds = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0, isValid = true };
             if (!LastReading.IsFiniteAndValid()) return;
             Debug.Log("[ARNav][GPS] sample=" + publishedSampleCount + " providerTimestamp=" + info.timestamp.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture) + " hAcc=" + info.horizontalAccuracy.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " vAcc=" + info.verticalAccuracy.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture));
             ReadingReceived?.Invoke(LastReading);

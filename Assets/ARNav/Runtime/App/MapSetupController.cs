@@ -445,7 +445,7 @@ namespace ARNav.Runtime.App
         public void Open3DPreview()
         {
             if (session == null || session.ActiveProject == null) { SetStatus("Open a map before previewing it."); return; }
-            if (!EnsureDevelopmentScale()) { SetStatus("The imported map has no usable geometry or scale."); return; }
+            if (!EnsurePreviewGeometry()) { SetStatus("The map has no usable geometry for 3D preview. Review the detected layout."); return; }
             SceneManager.LoadScene("Navigation");
         }
 
@@ -478,11 +478,53 @@ namespace ARNav.Runtime.App
         private void OnJsonSaveCompleted(bool success, string destination, long bytes)
         { SetStatus(success ? "Map JSON saved (" + bytes + " bytes)." : destination == "Export cancelled." ? "JSON export cancelled." : "Export JSON failed: " + destination); }
 
-        private bool EnsureDevelopmentScale()
+        public void ImportMapJson()
+        {
+            var bridge = GetComponent<AndroidDocumentBridge>() ?? gameObject.AddComponent<AndroidDocumentBridge>();
+            SetStatus("Choose a saved map JSON file...");
+            if (!bridge.BeginJsonOpen(OnJsonOpened, out var error)) SetStatus("Import JSON failed: " + error);
+        }
+
+        private void OnJsonOpened(bool success, string json, string error)
+        {
+            if (!success) { SetStatus(error ?? "JSON import failed."); return; }
+            try
+            {
+                var imported = MapJsonSerializer.Deserialize(json);
+                var validation = MapValidator.Validate(imported);
+                if (!validation.IsValid) throw new InvalidOperationException("Invalid map JSON: " + string.Join(" ", validation.errors.ToArray()));
+                var hasGeometry = false;
+                foreach (var candidateFloor in imported.floors)
+                    if (candidateFloor.rooms != null && candidateFloor.rooms.Count > 0 ||
+                        candidateFloor.walls != null && candidateFloor.walls.Count > 0 ||
+                        candidateFloor.architecturalWallPaths != null && candidateFloor.architecturalWallPaths.Count > 0 ||
+                        candidateFloor.architecturalWallRuns != null && candidateFloor.architecturalWallRuns.Count > 0) hasGeometry = true;
+                if (!hasGeometry) throw new InvalidOperationException("JSON contains no generated room or wall geometry.");
+                // Import as an independent local copy. The source image file is not
+                // embedded in project JSON and may belong to another installation.
+                imported.projectId = "json-" + Guid.NewGuid().ToString("N");
+                if (imported.sourceImage != null) imported.sourceImage.pathReference = null;
+                repository.SaveProject(imported);
+                session.Open(imported, DetermineState(imported)); session.MarkSaved();
+                viewer?.Unload();
+                annotationController?.Initialize(imported, repository, HandleAnnotationsCommitted);
+                scaleCalibrationController?.Initialize(viewer, scaleCalibrationOverlay, SetExternalStatus);
+                geoCalibrationController?.Initialize(imported, viewer, geoAnchorOverlay, SetExternalStatus);
+                locationTrackingController?.Initialize(imported);
+                UpdateScaleInfo(); UpdatePrimaryControls();
+                SetStatus("Map JSON imported. Saved 3D geometry is ready; source image is separate.");
+            }
+            catch (Exception exception) { Debug.LogException(exception); SetStatus("Import JSON failed: " + exception.Message); }
+        }
+
+        private bool EnsurePreviewGeometry()
         {
             var project = session == null ? null : session.ActiveProject;
-            if (project == null || project.floors == null || project.floors.Count == 0 || project.sourceImage == null) return false;
+            if (project == null || project.floors == null || project.floors.Count == 0) return false;
             var floor = project.floors[0];
+            // Saved local geometry is authoritative, especially for imported JSON.
+            if (HasStoredGeometry(floor) && PixelToLocalGeometryConverter.ValidateDerived(floor).IsValid) return true;
+            if (project.sourceImage == null) return false;
             var image = project.sourceImage;
             if (floor.sourceAnnotations == null || floor.sourceAnnotations.rooms == null || floor.sourceAnnotations.rooms.Count == 0) return false;
             if (project.scaleCalibration == null || !project.scaleCalibration.isValid)
@@ -490,10 +532,11 @@ namespace ARNav.Runtime.App
                 var first = new PixelPoint(0, 0); var second = new PixelPoint(Mathf.Min(100, image.originalWidthPixels), 0);
                 var calculation = ScaleCalibrationService.Calculate(first, second, Mathf.Min(1f, Mathf.Max(0.001f, second.x - first.x) * 0.01f), image.originalWidthPixels, image.originalHeightPixels);
                 if (!calculation.IsValid) return false;
-                project.scaleCalibration = new ScaleCalibrationData { firstPixel = first, secondPixel = second, knownDistanceMetres = calculation.PixelDistance * 0.01f, pixelDistance = calculation.PixelDistance, metresPerPixel = 0.01f, isValid = true, calibratedUtc = DateTime.UtcNow.ToString("o"), validationMessage = "Development scale; replace with surveyed calibration." };
+                project.scaleCalibration = new ScaleCalibrationData { firstPixel = first, secondPixel = second, knownDistanceMetres = calculation.PixelDistance * 0.01f, pixelDistance = calculation.PixelDistance, metresPerPixel = 0.01f, isValid = true, isEstimated = true, calibratedUtc = DateTime.UtcNow.ToString("o"), validationMessage = "Estimated preview scale; dimensions are not measured." };
             }
-            if (!PixelToLocalGeometryConverter.TryRegenerate(floor, project.scaleCalibration, image.originalWidthPixels, image.originalHeightPixels, new MapGenerationDefaults(), out var result)) { Debug.LogWarning("[ARNav] Development scale conversion failed: " + string.Join(" ", result.errors.ToArray())); return false; }
+            if (!PixelToLocalGeometryConverter.TryRegenerate(floor, project.scaleCalibration, image.originalWidthPixels, image.originalHeightPixels, new MapGenerationDefaults(), out var result)) { Debug.LogWarning("[ARNav] Preview scale conversion failed: " + string.Join(" ", result.errors.ToArray())); return false; }
             try { repository.SaveProject(project); session.SetSetupState(MapSetupState.ScaleCalibrated); session.MarkSaved(); } catch (Exception exception) { Debug.LogException(exception); return false; }
+            if (project.scaleCalibration.isEstimated) SetStatus("Estimated-scale preview: dimensions are not measured. Calibrate scale for accurate sizes.");
             return true;
         }
         public void ConfirmGeometry()
@@ -523,7 +566,7 @@ namespace ARNav.Runtime.App
             var project = session.ActiveProject; var floor = project.floors[0]; var image = project.sourceImage;
             var calculation = ScaleCalibrationService.Calculate(scaleCalibrationController.FirstPoint, scaleCalibrationController.SecondPoint, distance, image.originalWidthPixels, image.originalHeightPixels);
             if (!calculation.IsValid) { SetStatus(calculation.Error); return; }
-            var next = new ScaleCalibrationData { firstPixel = scaleCalibrationController.FirstPoint, secondPixel = scaleCalibrationController.SecondPoint, knownDistanceMetres = distance, pixelDistance = calculation.PixelDistance, metresPerPixel = calculation.MetresPerPixel, isValid = true, calibratedUtc = DateTime.UtcNow.ToString("o"), validationMessage = "Valid" };
+            var next = new ScaleCalibrationData { firstPixel = scaleCalibrationController.FirstPoint, secondPixel = scaleCalibrationController.SecondPoint, knownDistanceMetres = distance, pixelDistance = calculation.PixelDistance, metresPerPixel = calculation.MetresPerPixel, isValid = true, isEstimated = false, calibratedUtc = DateTime.UtcNow.ToString("o"), validationMessage = "Valid" };
             var oldScale = project.scaleCalibration; var oldRooms = floor.rooms; var oldWalls = floor.walls; var oldDoors = floor.doors;
             project.scaleCalibration = next;
             if (project.geographicCalibration != null) { project.geographicCalibration.isValid = false; project.geographicCalibration.validationMessage = "Scale changed; geographic calibration required."; }
@@ -610,18 +653,21 @@ namespace ARNav.Runtime.App
         {
             if (scaleInfoText == null || session == null || session.ActiveProject == null) return;
             var scale = session.ActiveProject.scaleCalibration;
-            if (scale != null && scale.isValid) scaleInfoText.text = "Scale: " + scale.metresPerPixel.ToString("0.0000", CultureInfo.InvariantCulture) + " m/px\nPixel distance: " + scale.pixelDistance.ToString("0.0", CultureInfo.InvariantCulture) + " px\nReal distance: " + scale.knownDistanceMetres.ToString("0.00", CultureInfo.InvariantCulture) + " m";
+            if (scale != null && scale.isValid) scaleInfoText.text = (scale.isEstimated ? "Estimated preview scale" : "Measured scale") + ": " + scale.metresPerPixel.ToString("0.0000", CultureInfo.InvariantCulture) + " m/px\nPixel distance: " + scale.pixelDistance.ToString("0.0", CultureInfo.InvariantCulture) + " px\n" + (scale.isEstimated ? "Dimensions are not measured" : "Real distance: " + scale.knownDistanceMetres.ToString("0.00", CultureInfo.InvariantCulture) + " m");
             else scaleInfoText.text = "Scale: not calibrated";
         }
 
         private static MapSetupState DetermineState(MapProjectData project)
         {
-            if (project == null || project.sourceImage == null || string.IsNullOrWhiteSpace(project.sourceImage.pathReference)) return MapSetupState.NoMap;
+            if (project == null) return MapSetupState.NoMap;
             if (project.geographicCalibration != null && project.geographicCalibration.isValid) return MapSetupState.GeoCalibrated;
-            if (project.scaleCalibration != null && project.scaleCalibration.isValid && project.floors != null && project.floors.Count > 0 && PixelToLocalGeometryConverter.ValidateDerived(project.floors[0]).IsValid) return MapSetupState.ScaleCalibrated;
+            if (project.floors != null && project.floors.Count > 0 && HasStoredGeometry(project.floors[0]) && PixelToLocalGeometryConverter.ValidateDerived(project.floors[0]).IsValid) return MapSetupState.ScaleCalibrated;
+            if (project.sourceImage == null || string.IsNullOrWhiteSpace(project.sourceImage.pathReference)) return MapSetupState.NoMap;
             if (project.floors != null && project.floors.Count > 0 && project.floors[0].sourceAnnotations != null && project.floors[0].sourceAnnotations.rooms != null && project.floors[0].sourceAnnotations.rooms.Count > 0) return MapSetupState.GeometryReady;
             return MapSetupState.ImageImported;
         }
+        private static bool HasStoredGeometry(FloorData floor)
+        { return floor != null && (floor.rooms != null && floor.rooms.Count > 0 || floor.walls != null && floor.walls.Count > 0 || floor.architecturalWallPaths != null && floor.architecturalWallPaths.Count > 0 || floor.architecturalWallRuns != null && floor.architecturalWallRuns.Count > 0); }
         private void BindAnnotationButtons()
         {
             if (annotationController == null) return;

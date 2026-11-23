@@ -14,6 +14,9 @@ using ARNav.Runtime.Import;
 using ARNav.Runtime.Location;
 using UnityEngine;
 using UnityEngine.UI;
+using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.Controls;
 
 namespace ARNav.Runtime.Navigation
 {
@@ -50,6 +53,8 @@ namespace ARNav.Runtime.Navigation
         private double lastRerouteUnixSeconds;
         private string selectedStartRoomId;
         private Text minimalGpsReadout;
+        private LocationReading lastGpsReading;
+        private Coroutine gpsFreshnessRoutine;
         [SerializeField] private float defaultViewAngle = 0.5f;
         [SerializeField] private float defaultViewZoom = 0.5f;
         private CameraViewState cameraView;
@@ -58,6 +63,7 @@ namespace ARNav.Runtime.Navigation
         private float mapReflectionZ;
         private int startupViewStabilizationFrames;
         private int lastDisplayGeneration;
+        private bool orbitDragging;
         public MapSetupState SetupState { get { return session.SetupState; } }
         public NavigationRoute ActiveRoute { get { return route; } }
         public bool HasActiveRoute { get { return route != null && route.valid; } }
@@ -72,7 +78,7 @@ namespace ARNav.Runtime.Navigation
             return true;
         }
         public RuntimeNavMeshState NavMeshState { get { return navMeshBuilder == null ? RuntimeNavMeshState.NotBuilt : navMeshBuilder.State; } }
-        public bool CanExportCurrentModel { get { return exportAvailable && generator != null && project != null && project.sourceImage != null && generator.GeneratedRoot != null && generator.GeneratedProjectId == project.projectId && generator.GeneratedSourceSha256 == project.sourceImage.sha256; } }
+        public bool CanExportCurrentModel { get { return exportAvailable && generator != null && project != null && generator.GeneratedRoot != null && generator.GeneratedProjectId == project.projectId && generator.GeneratedSourceSha256 == (project.sourceImage == null ? null : project.sourceImage.sha256); } }
         public event Action<bool> ExportAvailabilityChanged;
         public event Action<string> StatusChanged;
 
@@ -98,6 +104,48 @@ namespace ARNav.Runtime.Navigation
             lastDisplayGeneration = DisplayOrientationState.Generation;
         }
 
+        private void Update()
+        {
+            if (generator == null || generator.GeneratedRoot == null || previewCamera == null) return;
+            EnsureCameraState();
+            TouchControl first = null, second = null;
+            if (Touchscreen.current != null)
+                foreach (var touch in Touchscreen.current.touches)
+                    if (touch.press.isPressed) { if (first == null) first = touch; else { second = touch; break; } }
+            if (first != null)
+            {
+                orbitDragging = false;
+                var ui = EventSystem.current;
+                if (ui != null && (ui.IsPointerOverGameObject(first.touchId.ReadValue()) ||
+                    second != null && ui.IsPointerOverGameObject(second.touchId.ReadValue()))) return;
+                if (second == null)
+                {
+                    var delta = first.delta.ReadValue();
+                    if (delta.sqrMagnitude > 0.01f) { cameraView.SetYaw(cameraView.yaw + delta.x * 0.25f); cameraView.SetAngle(Mathf.Clamp01(cameraView.angle + delta.y / Mathf.Max(1f, Screen.height))); ApplyCameraView(); }
+                }
+                else
+                {
+                    var a = first.position.ReadValue(); var b = second.position.ReadValue();
+                    var previous = Vector2.Distance(a - first.delta.ReadValue(), b - second.delta.ReadValue());
+                    var delta = Vector2.Distance(a, b) - previous;
+                    if (Mathf.Abs(delta) > 0.01f) { cameraView.SetZoom(Mathf.Clamp01(cameraView.zoom + delta / Mathf.Max(1f, Screen.width))); ApplyCameraView(); }
+                }
+                return;
+            }
+            var mouse = Mouse.current;
+            if (mouse == null) return;
+            var overUi = EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
+            if (mouse.leftButton.wasPressedThisFrame) orbitDragging = !overUi;
+            if (mouse.leftButton.wasReleasedThisFrame) orbitDragging = false;
+            if (orbitDragging && mouse.leftButton.isPressed)
+            {
+                var delta = mouse.delta.ReadValue();
+                if (delta.sqrMagnitude > 0.01f) { cameraView.SetYaw(cameraView.yaw + delta.x * 0.25f); cameraView.SetAngle(Mathf.Clamp01(cameraView.angle + delta.y / Mathf.Max(1f, Screen.height))); ApplyCameraView(); }
+            }
+            var scroll = mouse.scroll.ReadValue().y;
+            if (!overUi && Mathf.Abs(scroll) > 0.01f) { cameraView.SetZoom(Mathf.Clamp01(cameraView.zoom + scroll / 1200f)); ApplyCameraView(); }
+        }
+
         private void OnEnable() { DisplayOrientationState.Changed += OnDisplayChanged; }
         private void OnDisable() { DisplayOrientationState.Changed -= OnDisplayChanged; }
         private void OnDisplayChanged()
@@ -113,7 +161,11 @@ namespace ARNav.Runtime.Navigation
             if (rebuildInProgress) { SetStatus("NavMesh build already in progress."); return; }
             SetExportAvailability(false);
             ClearRoute(); if (project == null || floor == null || generator == null || (NavigationFeatureConfiguration.NavigationFeaturesEnabled && navMeshBuilder == null)) { SetStatus("3D generation is not configured for the active map."); return; }
-            if (project.sourceImage == null || string.IsNullOrWhiteSpace(project.sourceImage.sha256)) { SetStatus("Current image identity is missing; import and analyze the current image again."); return; }
+            if (project.sourceImage == null || string.IsNullOrWhiteSpace(project.sourceImage.sha256))
+                if ((floor.rooms == null || floor.rooms.Count == 0) && (floor.walls == null || floor.walls.Count == 0) &&
+                    (floor.architecturalWallPaths == null || floor.architecturalWallPaths.Count == 0) &&
+                    (floor.architecturalWallRuns == null || floor.architecturalWallRuns.Count == 0))
+                { SetStatus("No saved geometry is available. Import and analyze a floor plan first."); return; }
             if (!generator.Generate(project, out var generationError)) { SetStatus(generationError); return; }
             mapReflectionZ = generator.GeneratedBounds.center.z;
             if (!NavigationFeatureConfiguration.NavigationFeaturesEnabled)
@@ -125,7 +177,7 @@ namespace ARNav.Runtime.Navigation
                 session.Open(project, MapSetupState.MapGenerated);
                 ApplyCameraView();
                 SetExportAvailability(true);
-                SetStatus("3D structure ready.");
+                SetStatus(project.scaleCalibration != null && project.scaleCalibration.isEstimated ? "Estimated-scale 3D preview. Dimensions are not measured." : "3D structure ready.");
                 return;
             }
             // Build navigation from a single union occupancy surface rather than the
@@ -355,14 +407,18 @@ namespace ARNav.Runtime.Navigation
         { exportAvailable = available; ExportAvailabilityChanged?.Invoke(CanExportCurrentModel); }
         public void SetGpsReadout(Text readout) { minimalGpsReadout = readout; }
         private void InitializeLocation()
-        { if (project == null) return; positionService = new UserMapPositionService(); locationProvider = Application.isEditor ? (ILocationProvider)mockLocationProvider : unityLocationProvider; if (locationProvider == null) return; locationProvider.ReadingReceived += OnLocationReading; locationProvider.StatusChanged += OnLocationStatus; locationHud?.SetStatus("Off"); }
+        { if (project == null) return; positionService = new UserMapPositionService(); locationProvider = Application.isEditor ? (ILocationProvider)mockLocationProvider : unityLocationProvider; if (locationProvider == null) return; locationProvider.ReadingReceived += OnLocationReading; locationProvider.StatusChanged += OnLocationStatus; locationHud?.SetStatus("Off"); gpsFreshnessRoutine = StartCoroutine(CheckGpsFreshness()); }
         private void OnLocationReading(LocationReading reading)
-        { var result = positionService.Evaluate(project, reading, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0); locationHud?.SetReading(reading, result); if (minimalGpsReadout != null && reading != null) { var c = CultureInfo.InvariantCulture; minimalGpsReadout.text = "Lat: " + reading.latitude.ToString("F6", c) + "\nLong: " + reading.longitude.ToString("F6", c) + "\nAlt: " + reading.altitudeMetres.ToString("0.0", c); } var settings = navMeshBuilder == null ? new NavigationSettings() : navMeshBuilder.Settings; liveStartAvailable = result.hasValidLocation && result.quality >= LocationQuality.Excellent && result.quality <= LocationQuality.Fair && reading.horizontalAccuracyMetres <= settings.gpsMaximumAccuracyMetres; if (liveStartAvailable) { liveStart = result.localPosition; if (route == null) SetStatus("Usable live map position received."); else { var offRoute = RouteWaypointSampler.DistanceToPolyline(result.localPosition, route.waypoints) > settings.offRouteThresholdMetres; if (offRoute) TryReroute(result.localPosition, settings); UpdateUserPosition(result.localPosition, reading.horizontalAccuracyMetres); } } }
+        { lastGpsReading = reading; var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0; var result = positionService.Evaluate(project, reading, now); locationHud?.SetReading(reading, result); if (minimalGpsReadout != null) minimalGpsReadout.text = LocationDisplayFormatter.Format(reading, now); var settings = navMeshBuilder == null ? new NavigationSettings() : navMeshBuilder.Settings; liveStartAvailable = result.hasValidLocation && result.quality >= LocationQuality.Excellent && result.quality <= LocationQuality.Fair && reading.horizontalAccuracyMetres <= settings.gpsMaximumAccuracyMetres; if (liveStartAvailable) { liveStart = result.localPosition; if (route == null) SetStatus("Usable live map position received."); else { var offRoute = RouteWaypointSampler.DistanceToPolyline(result.localPosition, route.waypoints) > settings.offRouteThresholdMetres; if (offRoute) TryReroute(result.localPosition, settings); UpdateUserPosition(result.localPosition, reading.horizontalAccuracyMetres); } } }
         private void TryReroute(LocalPoint start, NavigationSettings settings)
         { var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds(); var moved = RouteWaypointSampler.TotalDistance(new[] { route.startLocal, start }); if (now - lastRerouteUnixSeconds < 5 || moved < settings.rerouteMinimumMovementMetres) { SetStatus("Live position is off the current route."); return; } if (NavigationRouteService.TryCalculate(start, floor, route.destinationRoomId, settings, out var replacement, out _) && ValidateRoute(replacement, "rerouted route")) { ClearRoute(); route = replacement; CreateRouteObjects(route); progress.Reset(route); lastRerouteUnixSeconds = now; SetStatus("Route recalculated from current position."); } else SetStatus("Live position is off the route; destination remains unreachable from here."); }
-        private void OnLocationStatus(LocationProviderStatus status, string message) { locationHud?.SetStatus(status == LocationProviderStatus.Running ? "Running — waiting for fix" : status.ToString()); }
+        private void OnLocationStatus(LocationProviderStatus status, string message) { var display = status == LocationProviderStatus.Running ? "GPS waiting for fix" : "GPS " + (message ?? status.ToString()); locationHud?.SetStatus(display); if (minimalGpsReadout != null) minimalGpsReadout.text = display; }
+        private IEnumerator CheckGpsFreshness()
+        { while (true) { yield return new WaitForSecondsRealtime(2f); if (lastGpsReading == null) continue; var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0; if (LocationQualityEvaluator.IsStale(lastGpsReading, now, new LocationQualitySettings(), out _)) { var display = LocationDisplayFormatter.Format(lastGpsReading, now); locationHud?.SetStatus(display); if (minimalGpsReadout != null) minimalGpsReadout.text = display; liveStartAvailable = false; } } }
         public void FitBuilding()
-        { ApplyCameraView(); }
+        { EnsureCameraState(); cameraView.SetZoom(0.5f); ApplyCameraView(); }
+        public void ResetCamera()
+        { ResetCameraViewForProject(); ApplyCameraView(); }
         public void FitBuildingTopDown()
         { if (previewCamera == null || generator == null || generator.GeneratedRoot == null) return; EnsureCameraState(); cameraView.SetAngle(0f); cameraView.SetZoom(0.5f); cameraView.SetPivot(GetGeneratedBounds().center); ApplyCameraView(); }
         public void BackToSetup() { UnityEngine.SceneManagement.SceneManager.LoadScene("MapSetup"); }
@@ -385,7 +441,7 @@ namespace ARNav.Runtime.Navigation
             }
             else
             {
-                var orbit = Quaternion.Euler(pitch, 35f, 0f);
+                var orbit = Quaternion.Euler(pitch, cameraView.yaw, 0f);
                 previewCamera.transform.position = target + orbit * Vector3.back * distance;
                 previewCamera.transform.rotation = Quaternion.LookRotation((target - previewCamera.transform.position).normalized, Vector3.up);
             }

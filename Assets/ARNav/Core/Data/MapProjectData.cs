@@ -48,6 +48,8 @@ namespace ARNav.Core.Data
         public float knownDistanceMetres;
         public float metresPerPixel;
         public bool isValid;
+        // True when geometry uses a preview estimate rather than a measured distance.
+        public bool isEstimated;
         public float pixelDistance;
         public string calibratedUtc;
         public string validationMessage;

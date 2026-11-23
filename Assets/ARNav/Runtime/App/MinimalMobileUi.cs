@@ -64,6 +64,7 @@ namespace ARNav.Runtime.App
             CreateButton("Review / Edit", canvas.transform, new Vector2(0.02f, 0.92f), new Vector2(0.21f, 0.98f)).onClick.AddListener(setup.ReviewGeometry);
             CreateButton("Calibrate Scale", canvas.transform, new Vector2(0.22f, 0.92f), new Vector2(0.44f, 0.98f)).onClick.AddListener(setup.BeginScaleCalibration);
             CreateButton("Export JSON", canvas.transform, new Vector2(0.45f, 0.92f), new Vector2(0.65f, 0.98f)).onClick.AddListener(setup.ExportCurrentJson);
+            CreateButton("Import JSON", canvas.transform, new Vector2(0.66f, 0.92f), new Vector2(0.84f, 0.98f)).onClick.AddListener(setup.ImportMapJson);
             statusReadout = CreateStatusReadout(); statusAction = message => { if (statusReadout != null) statusReadout.text = message; }; setup.StatusChanged += statusAction;
             var location = FindObjectOfType<LocationTrackingController>();
             if (location != null) { location.gameObject.SetActive(true); gps.onClick.AddListener(location.EnableLocation); location.SetMinimalReadout(CreateGpsReadout()); }
@@ -91,6 +92,8 @@ namespace ARNav.Runtime.App
             export3DAction = navigation.ExportCurrent3D;
             export3DButton.onClick.AddListener(export3DAction);
             CreateButton("EXPORT JSON", canvas.transform, new Vector2(0.40f, 0.92f), new Vector2(0.61f, 0.98f)).onClick.AddListener(navigation.ExportCurrentJson);
+            CreateButton("FIT", canvas.transform, new Vector2(0.62f, 0.92f), new Vector2(0.73f, 0.98f)).onClick.AddListener(navigation.FitBuilding);
+            CreateButton("RESET", canvas.transform, new Vector2(0.74f, 0.92f), new Vector2(0.87f, 0.98f)).onClick.AddListener(navigation.ResetCamera);
             statusReadout = CreateStatusReadout(); statusAction = message => { if (statusReadout != null) statusReadout.text = message; }; navigation.StatusChanged += statusAction;
             export3DButton.interactable = navigation.CanExportCurrentModel;
             exportAvailabilityAction = available => { if (export3DButton != null) export3DButton.interactable = available; };
@@ -146,7 +149,7 @@ namespace ARNav.Runtime.App
         private Text CreateGpsReadout()
         {
             var go = new GameObject("GPSReadout", typeof(RectTransform), typeof(Text)); go.transform.SetParent(canvas.transform, false);
-            var rect = go.GetComponent<RectTransform>(); rect.anchorMin = new Vector2(0.68f, 0.82f); rect.anchorMax = new Vector2(0.98f, 0.98f); rect.offsetMin = rect.offsetMax = Vector2.zero;
+            var rect = go.GetComponent<RectTransform>(); rect.anchorMin = new Vector2(0.64f, 0.67f); rect.anchorMax = new Vector2(0.98f, 0.82f); rect.offsetMin = rect.offsetMax = Vector2.zero;
             var text = go.GetComponent<Text>(); text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"); text.fontSize = 13; text.color = Color.white; text.alignment = TextAnchor.UpperRight; text.raycastTarget = false; text.text = ""; return text;
         }
 

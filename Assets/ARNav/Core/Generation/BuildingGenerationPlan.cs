@@ -25,6 +25,16 @@ namespace ARNav.Core.Generation
                     // remain in JSON for editing and validation, but must never become a
                     // generated floor that fills architectural holes.
                     if (room == null || !room.walkable) continue;
+                    if (room.holes != null && room.holes.Count > 0)
+                    {
+                        if (room.rasterRuns != null && room.rasterRuns.Count > 0)
+                        {
+                            fp.rooms.Add(new RoomGenerationPlan { source = room, rasterFallback = true });
+                            plan.warnings.Add("Floor " + floor.id + ": Room " + room.id + " has holes; using occupied raster cells to preserve them.");
+                        }
+                        else plan.warnings.Add("Floor " + floor.id + ": Room " + room.id + " has holes but no raster cells; floor patch skipped to avoid filling voids.");
+                        continue;
+                    }
                     if (room.preferRasterGeometry && room.rasterRuns != null && room.rasterRuns.Count > 0)
                     {
                         var rasterDiagnostic = room.polygon == null ? null : PolygonTriangulator.Triangulate(room.polygon.vertices);
