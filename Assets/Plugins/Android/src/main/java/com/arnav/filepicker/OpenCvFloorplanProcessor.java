@@ -48,9 +48,11 @@ public final class OpenCvFloorplanProcessor {
             byte[] source = new byte[width * height]; black.get(0, 0, source);
             Rect crop = detectDocumentCrop(source, width, height);
             Mat inCrop = own(owned, black.submat(crop));
-            Mat strong = own(owned, new Mat());
-            Mat square = own(owned, Imgproc.getStructuringElement(Imgproc.MORPH_RECT, new Size(3, 3)));
-            Imgproc.morphologyEx(inCrop, strong, Imgproc.MORPH_OPEN, square);
+            // Keep the thresholded component intact here. A 3x3 opening erased
+            // valid one-pixel edges from thin partitions and reduced recall on
+            // the synthetic 6px walls. Connected-component classification below
+            // removes isolated specks without shrinking connected architecture.
+            Mat strong = own(owned, inCrop.clone());
             int lineLength = Math.max(18, Math.min(crop.width, crop.height) / 12);
             Mat horizontal = own(owned, new Mat());
             Mat vertical = own(owned, new Mat());
