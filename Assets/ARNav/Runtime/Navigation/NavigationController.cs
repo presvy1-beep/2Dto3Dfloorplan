@@ -382,15 +382,6 @@ namespace ARNav.Runtime.Navigation
             else { Debug.LogWarning("[ARNav][Export] Save failed: " + destination); SetStatus(destination == "Export cancelled." ? "GLB export cancelled." : "GLB export failed: " + destination); }
         }
 
-        public void CopyCurrentJson()
-        {
-            if (project == null) { SetStatus("No map JSON is available."); return; }
-            var json = ARNav.Core.Serialization.MapJsonSerializer.Serialize(project);
-            SetStatus(AndroidDocumentBridge.TryCopyTextAndVerify(json, out var readBack, out var error)
-                ? "Map JSON copied (" + readBack.Length + " characters)."
-                : "Copy JSON failed: " + (error ?? "clipboard did not match") + " Use Export JSON.");
-        }
-
         public void ExportCurrentJson()
         {
             if (project == null) { SetStatus("No map JSON is available."); return; }

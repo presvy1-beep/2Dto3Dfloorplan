@@ -85,7 +85,7 @@ namespace ARNav.Runtime.App
         private void AnalyzeFloorPlan()
         {
             if (analysisController == null || viewer == null || !viewer.IsLoaded || session == null || session.ActiveProject == null) { SetStatus("Import a floor plan before analyzing it."); return; }
-            SetStatus("Analyzing floor plan...");
+            SetStatus("Processing floorplan...");
             analysisSessionId = session.SessionId;
             var expectedSessionId = analysisSessionId;
             var expectedHash = session.ActiveProject.sourceImage.sha256;
@@ -139,7 +139,12 @@ namespace ARNav.Runtime.App
 
         private void HandleExtractionResult(FloorPlanExtractionResult result)
         {
-            if (result == null || !result.succeeded) { SetStatus(result == null ? "Floor-plan analysis failed." : result.message); return; }
+            if (result == null || !result.succeeded)
+            {
+                SetStatus(result != null && result.message != null && result.message.IndexOf("cancel", StringComparison.OrdinalIgnoreCase) >= 0
+                    ? string.Empty : result == null ? "Floor-plan analysis failed." : result.message);
+                return;
+            }
             if (session == null || session.ActiveProject == null || result.sessionId != session.SessionId || result.sourceSha256 != session.ActiveProject.sourceImage.sha256) { Debug.LogWarning("[ARNav] Rejected extraction commit with mismatched session/hash."); return; }
             if (session.ActiveProject.floors == null || session.ActiveProject.floors.Count == 0) { SetStatus("The active map has no floor."); return; }
             var floor = session.ActiveProject.floors[0]; floor.sourceAnnotations = result.annotations; floor.mapSessionId = result.sessionId; floor.sourceSha256 = result.sourceSha256;
@@ -164,7 +169,15 @@ namespace ARNav.Runtime.App
                 Debug.Log("[ARNav][2D] Reloaded project from JSON");
                 Debug.Log("[ARNav][2D] Rendering " + result.annotations.rooms.Count + " rooms, " + result.annotations.walls.Count + " walls, " + result.annotations.doors.Count + " doors");
                 analysisController?.DiscardTransientState();
-                SetStatus("Detected " + result.annotations.rooms.Count + " rooms, " + result.annotations.walls.Count + " walls, " + result.annotations.doors.Count + " doors. Review before confirming.");
+                if (!EnsurePreviewGeometry())
+                {
+                    SetStatus("Could not create estimated 3D geometry from the detected layout.");
+                    return;
+                }
+                session.SetSetupState(MapSetupState.GeometryReady);
+                repository.SaveProject(session.ActiveProject);
+                session.MarkSaved();
+                SetStatus(string.Empty);
                 Debug.Log("[ARNav][Extract] Saved detected geometry to map.json.");
             }
             catch (Exception exception) { Debug.LogException(exception); SetStatus("Could not save detected geometry."); }
@@ -351,8 +364,7 @@ namespace ARNav.Runtime.App
                 UpdateScaleInfo(); UpdateGeoInfo(); UpdatePredictions(); UpdatePrimaryControls();
                 try { imageStorage.DeleteIfObsolete(candidate, oldPath, candidate.sourceImage.pathReference); }
                 catch (Exception cleanupException) { Debug.LogWarning("ARNav: old imported image could not be cleaned up: " + cleanupException.Message); }
-                SetStatus("Import complete. Image: " + candidate.sourceImage.originalWidthPixels + " x " + candidate.sourceImage.originalHeightPixels + ".");
-                AnalyzeFloorPlan(); // Preserve the existing automatic analysis workflow.
+                AnalyzeFloorPlan();
                 return true;
             }
             catch (Exception exception)
@@ -418,9 +430,9 @@ namespace ARNav.Runtime.App
         {
             var loaded = viewer != null && viewer.IsLoaded;
             var hasAnnotations = session != null && session.ActiveProject != null && session.ActiveProject.floors != null && session.ActiveProject.floors.Count > 0 && session.ActiveProject.floors[0].sourceAnnotations != null && session.ActiveProject.floors[0].sourceAnnotations.rooms != null && session.ActiveProject.floors[0].sourceAnnotations.rooms.Count > 0;
-            SetButtonVisible(importButton, true); SetButtonVisible(analyzeButton, loaded); SetButtonVisible(showOriginalButton, hasAnnotations); SetButtonVisible(editMapButton, hasAnnotations); SetButtonVisible(fitButton, loaded);
+            SetButtonVisible(importButton, true); SetButtonVisible(analyzeButton, false); SetButtonVisible(showOriginalButton, false); SetButtonVisible(editMapButton, false); SetButtonVisible(fitButton, loaded);
             var scaleReady = session != null && (session.SetupState == MapSetupState.GeometryReady || session.SetupState == MapSetupState.ScaleCalibrated || session.SetupState == MapSetupState.GeoCalibrated || session.SetupState == MapSetupState.MapGenerated);
-            SetButtonVisible(calibrateScaleButton, scaleReady); SetButtonVisible(calibrateGeoButton, session != null && (session.SetupState == MapSetupState.ScaleCalibrated || session.SetupState == MapSetupState.GeoCalibrated)); SetButtonVisible(preview3DButton, session != null && (session.SetupState == MapSetupState.ScaleCalibrated || session.SetupState == MapSetupState.GeoCalibrated || session.SetupState == MapSetupState.MapGenerated));
+            SetButtonVisible(calibrateScaleButton, false); SetButtonVisible(calibrateGeoButton, false); SetButtonVisible(preview3DButton, scaleReady);
         }
 
         private static void SetButtonVisible(Button button, bool visible) { if (button != null && button.gameObject.activeSelf != visible) button.gameObject.SetActive(visible); }
@@ -445,22 +457,8 @@ namespace ARNav.Runtime.App
         public void Open3DPreview()
         {
             if (session == null || session.ActiveProject == null) { SetStatus("Open a map before previewing it."); return; }
-            if (!EnsurePreviewGeometry()) { SetStatus("The map has no usable geometry for 3D preview. Review the detected layout."); return; }
+            if (!EnsurePreviewGeometry()) { SetStatus("The map has no usable geometry for 3D preview."); return; }
             SceneManager.LoadScene("Navigation");
-        }
-
-        /// <summary>Copies the complete current repository model; no presentation subset is used.</summary>
-        public void CopyCurrentJson()
-        {
-            if (session == null || session.ActiveProject == null || session.ActiveProject.floors == null || session.ActiveProject.floors.Count == 0 || session.ActiveProject.floors[0].sourceAnnotations == null)
-            { SetStatus("Analyze a floor plan before copying JSON."); return; }
-            if (session.ActiveProject.sourceImage == null || string.IsNullOrWhiteSpace(session.ActiveProject.sourceImage.sha256))
-            { SetStatus("Current map has no source identity. Import an image first."); return; }
-            var json = MapJsonSerializer.Serialize(session.ActiveProject);
-            if (AndroidDocumentBridge.TryCopyTextAndVerify(json, out var readBack, out var error))
-                SetStatus("Map JSON copied (" + readBack.Length + " characters).");
-            else
-                SetStatus("Copy JSON failed: " + (error ?? "clipboard did not match") + " Use Export JSON.");
         }
 
         public void ExportCurrentJson()
@@ -680,16 +678,9 @@ namespace ARNav.Runtime.App
         }
         private void HandleAnalysisProgress(FloorPlanAnalysisStage stage)
         {
-            switch (stage)
-            {
-                case FloorPlanAnalysisStage.PreparingImage: SetStatus("Preparing image..."); break;
-                case FloorPlanAnalysisStage.DetectingWalls: SetStatus("Detecting walls..."); break;
-                case FloorPlanAnalysisStage.DetectingRoomRegions: SetStatus("Detecting room regions..."); break;
-                case FloorPlanAnalysisStage.GeneratingMapGeometry: SetStatus("Generating map geometry..."); break;
-                case FloorPlanAnalysisStage.Complete: SetStatus("Analysis complete."); break;
-            }
+            if (stage != FloorPlanAnalysisStage.Complete) SetStatus("Processing floorplan...");
         }
-        private void HandleAnalysisState(bool analyzing) { if (!analyzing && statusText != null && statusText.text.EndsWith("...", StringComparison.Ordinal)) SetStatus("Analysis stopped."); }
+        private void HandleAnalysisState(bool analyzing) { if (!analyzing && statusText != null && statusText.text == "Processing floorplan...") SetStatus(string.Empty); }
         private void SetStatus(string message) { if (statusText != null) statusText.text = message ?? "Unknown image import error."; StatusChanged?.Invoke(message); Debug.Log("ARNav: " + message); }
         private void OnDestroy() { if (analysisController != null) { analysisController.DiscardTransientState(); analysisController.ProgressChanged -= HandleAnalysisProgress; analysisController.AnalysisStateChanged -= HandleAnalysisState; } if (imageImporter != null) imageImporter.ResultRecovered -= HandleImportResult; if (importButton != null) importButton.onClick.RemoveListener(ImportFloorPlan); if (fitButton != null) fitButton.onClick.RemoveListener(FitView); if (preview3DButton != null) preview3DButton.onClick.RemoveListener(Open3DPreview); if (seedTestButton != null) seedTestButton.onClick.RemoveListener(CreateSeedTestProject); if (seedNavigationButton != null) seedNavigationButton.onClick.RemoveListener(OpenSeedNavigation); if (analyzeButton != null) analyzeButton.onClick.RemoveListener(AnalyzeFloorPlan); if (showOriginalButton != null) showOriginalButton.onClick.RemoveListener(ToggleOriginalImage); if (editMapButton != null) editMapButton.onClick.RemoveListener(ToggleEditorPanel); }
     }

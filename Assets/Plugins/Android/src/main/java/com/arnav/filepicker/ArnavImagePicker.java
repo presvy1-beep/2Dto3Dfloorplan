@@ -3,8 +3,6 @@ package com.arnav.filepicker;
 import android.app.Activity;
 import android.content.ContentResolver;
 import android.content.Intent;
-import android.content.ClipData;
-import android.content.ClipboardManager;
 import android.database.Cursor;
 import android.net.Uri;
 import android.provider.OpenableColumns;
@@ -52,17 +50,6 @@ public final class ArnavImagePicker {
         intent.setType("image/*");
         intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[] { "image/png", "image/jpeg", "image/jpg" });
         activity.startActivityForResult(intent, REQUEST_CODE);
-    }
-
-    public static String copyTextAndReadBack(String text) {
-        Activity activity = UnityPlayer.currentActivity;
-        ClipboardManager clipboard = (ClipboardManager) activity.getSystemService(Activity.CLIPBOARD_SERVICE);
-        if (clipboard == null) return "";
-        clipboard.setPrimaryClip(ClipData.newPlainText("ARNav JSON", text == null ? "" : text));
-        ClipData clip = clipboard.getPrimaryClip();
-        if (clip == null || clip.getItemCount() == 0) return "";
-        CharSequence value = clip.getItemAt(0).coerceToText(activity);
-        return value == null ? "" : value.toString();
     }
 
     public static void openGlbSavePicker(String objectName, String methodName, String sourcePath, String suggestedName) {

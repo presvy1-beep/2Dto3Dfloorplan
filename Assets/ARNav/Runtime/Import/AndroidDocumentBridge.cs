@@ -23,49 +23,12 @@ namespace ARNav.Runtime.Import
         public string error;
     }
 
-    /// <summary>Android clipboard and Storage Access Framework bridge for current-session data.</summary>
+    /// <summary>Android Storage Access Framework bridge for project files.</summary>
     public sealed class AndroidDocumentBridge : MonoBehaviour
     {
         private Action<bool, string, long> saveCompleted;
         private Action<bool, string, string> openCompleted;
         private string stagingPath;
-
-        public static bool TryCopyTextAndVerify(string text, out string readBack, out string error)
-        {
-            readBack = null; error = null;
-#if UNITY_ANDROID && !UNITY_EDITOR
-            try
-            {
-                using (var picker = new AndroidJavaClass("com.arnav.filepicker.ArnavImagePicker"))
-                    readBack = picker.CallStatic<string>("copyTextAndReadBack", text ?? string.Empty);
-                if (string.Equals(text ?? string.Empty, readBack ?? string.Empty, StringComparison.Ordinal)) return true;
-                error = "Clipboard verification failed. Export the JSON file instead.";
-                return false;
-            }
-            catch (Exception exception)
-            {
-                // Android clipboard writes are Binder transactions. Large maps can
-                // exceed the system parcel limit; treat that as a recoverable copy
-                // failure and keep the rest of the current session unaffected.
-                var message = exception.Message ?? string.Empty;
-                error = message.IndexOf("TransactionTooLarge", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        exception.GetType().Name.IndexOf("TransactionTooLarge", StringComparison.OrdinalIgnoreCase) >= 0
-                    ? "JSON is too large for the Android clipboard. The map remains available for 3D build and export."
-                    : message;
-                return false;
-            }
-#else
-            try
-            {
-                GUIUtility.systemCopyBuffer = text ?? string.Empty;
-                readBack = GUIUtility.systemCopyBuffer;
-                if (string.Equals(text ?? string.Empty, readBack ?? string.Empty, StringComparison.Ordinal)) return true;
-                error = "Clipboard verification failed. Export the JSON file instead.";
-                return false;
-            }
-            catch (Exception exception) { error = exception.Message; return false; }
-#endif
-        }
 
         public bool BeginGlbSave(byte[] glb, string suggestedName, Action<bool, string, long> completed, out string error)
         { return BeginSave(glb, suggestedName, "glb", false, completed, out error); }

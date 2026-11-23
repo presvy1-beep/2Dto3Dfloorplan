@@ -14,7 +14,10 @@ namespace ARNav.Runtime.App
     /// </summary>
     public sealed class MinimalMobileUi : MonoBehaviour
     {
+        private static bool importJsonOnSetup;
         private Canvas canvas;
+        private RectTransform safeRoot;
+        private Rect lastSafeArea;
         private GameObject controls;
         private MapSetupController setup;
         private NavigationController navigation;
@@ -42,54 +45,70 @@ namespace ARNav.Runtime.App
             }
             if (canvas == null) canvas = FindAnyObjectByType<Canvas>();
             if (canvas == null) return;
-            if (setup != null) BuildSetupControls();
+            var safeObject = new GameObject("SafeArea", typeof(RectTransform));
+            safeRoot = safeObject.GetComponent<RectTransform>();
+            safeRoot.SetParent(canvas.transform, false);
+            ApplySafeArea();
+            if (setup != null) { BuildSetupControls(); if (importJsonOnSetup) { importJsonOnSetup = false; StartCoroutine(OpenPendingJson()); } }
             else if (navigation != null) BuildNavigationControls();
+        }
+
+        private void Update()
+        {
+            if (safeRoot != null && Screen.safeArea != lastSafeArea) ApplySafeArea();
+        }
+
+        private void ApplySafeArea()
+        {
+            lastSafeArea = Screen.safeArea;
+            if (Screen.width <= 0 || Screen.height <= 0) return;
+            safeRoot.anchorMin = new Vector2(lastSafeArea.xMin / Screen.width, lastSafeArea.yMin / Screen.height);
+            safeRoot.anchorMax = new Vector2(lastSafeArea.xMax / Screen.width, lastSafeArea.yMax / Screen.height);
+            safeRoot.offsetMin = safeRoot.offsetMax = Vector2.zero;
         }
 
         private void BuildSetupControls()
         {
-            Hide("TopBar", "PrimaryActions", "AnnotationEditorPanel", "ScaleCalibrationPanel", "GeoCalibrationPanel", "LocationHudText", "LocationMockPanel", "Enable GPS");
-            controls = CreatePanel("ARNavControls", new Vector2(0.02f, 0.01f), new Vector2(0.98f, 0.11f));
-            var import = CreateButton("Import", controls.transform, new Vector2(0.01f, 0.08f), new Vector2(0.23f, 0.92f));
+            Hide("TopBar", "PrimaryActions", "AnnotationEditorPanel", "ScaleCalibrationPanel", "GeoCalibrationPanel", "LocationHudText", "LocationMockPanel", "Enable GPS", "Status");
+            CreateTitle("Floorplan Converter");
+            controls = CreatePanel("FloorplanActions", new Vector2(0.04f, 0.04f), new Vector2(0.96f, 0.18f));
+            var import = CreateButton("Import Floorplan", controls.transform, new Vector2(0.01f, 0.12f), new Vector2(0.35f, 0.88f));
             setupImportButton = import; setupImportLabel = import.GetComponentInChildren<Text>();
-            var copy = CreateButton("Copy JSON", controls.transform, new Vector2(0.26f, 0.08f), new Vector2(0.49f, 0.92f));
-            var build = CreateButton("BUILD 3D", controls.transform, new Vector2(0.52f, 0.08f), new Vector2(0.76f, 0.92f));
-            var gps = CreateButton("GPS", controls.transform, new Vector2(0.79f, 0.08f), new Vector2(0.99f, 0.92f));
+            var build = CreateButton("View 3D", controls.transform, new Vector2(0.36f, 0.12f), new Vector2(0.58f, 0.88f));
+            var importJson = CreateButton("Import JSON", controls.transform, new Vector2(0.59f, 0.12f), new Vector2(0.79f, 0.88f));
+            var exportJson = CreateButton("Export JSON", controls.transform, new Vector2(0.80f, 0.12f), new Vector2(0.99f, 0.88f));
             import.onClick.AddListener(setup.ImportFloorPlan);
             analysis = GetComponent<FloorPlanAnalysisController>();
-            if (analysis != null) { analysisStateAction = analyzing => { if (setupImportLabel != null) setupImportLabel.text = analyzing ? "Cancel analysis" : "Import"; }; analysis.AnalysisStateChanged += analysisStateAction; }
-            copy.onClick.AddListener(setup.CopyCurrentJson);
+            if (analysis != null) { analysisStateAction = analyzing => { if (setupImportLabel != null) setupImportLabel.text = analyzing ? "Cancel" : "Import Floorplan"; }; analysis.AnalysisStateChanged += analysisStateAction; }
             build.onClick.AddListener(setup.Open3DPreview);
-            CreateButton("Review / Edit", canvas.transform, new Vector2(0.02f, 0.92f), new Vector2(0.21f, 0.98f)).onClick.AddListener(setup.ReviewGeometry);
-            CreateButton("Calibrate Scale", canvas.transform, new Vector2(0.22f, 0.92f), new Vector2(0.44f, 0.98f)).onClick.AddListener(setup.BeginScaleCalibration);
-            CreateButton("Export JSON", canvas.transform, new Vector2(0.45f, 0.92f), new Vector2(0.65f, 0.98f)).onClick.AddListener(setup.ExportCurrentJson);
-            CreateButton("Import JSON", canvas.transform, new Vector2(0.66f, 0.92f), new Vector2(0.84f, 0.98f)).onClick.AddListener(setup.ImportMapJson);
+            importJson.onClick.AddListener(setup.ImportMapJson);
+            exportJson.onClick.AddListener(setup.ExportCurrentJson);
             statusReadout = CreateStatusReadout(); statusAction = message => { if (statusReadout != null) statusReadout.text = message; }; setup.StatusChanged += statusAction;
             var location = FindObjectOfType<LocationTrackingController>();
-            if (location != null) { location.gameObject.SetActive(true); gps.onClick.AddListener(location.EnableLocation); location.SetMinimalReadout(CreateGpsReadout()); }
+            if (location != null) { location.gameObject.SetActive(true); location.SetMinimalReadout(CreateGpsReadout()); }
         }
 
         private void BuildNavigationControls()
         {
-            Hide("NavigationTopBar", "NavigationControls", "NavigationLocationHudText");
-            controls = CreatePanel("ARNavNavigationControls", new Vector2(0.02f, 0.01f), new Vector2(0.98f, 0.11f));
-            var import = CreateButton("Import", controls.transform, new Vector2(0.01f, 0.08f), new Vector2(0.23f, 0.92f));
-            var copy = CreateButton("Copy JSON", controls.transform, new Vector2(0.26f, 0.08f), new Vector2(0.49f, 0.92f));
-            var exportJson = CreateButton("Export JSON", controls.transform, new Vector2(0.52f, 0.08f), new Vector2(0.76f, 0.92f));
-            var gps = CreateButton("GPS", controls.transform, new Vector2(0.79f, 0.08f), new Vector2(0.99f, 0.92f));
+            Hide("NavigationTopBar", "NavigationControls", "NavigationLocationHudText", "NavigationStatus");
+            controls = CreatePanel("ModelToolbar", new Vector2(0.02f, 0.02f), new Vector2(0.98f, 0.11f));
+            var import = CreateButton("Import", controls.transform, new Vector2(0f, 0.08f), new Vector2(0.12f, 0.92f));
+            var importJson = CreateButton("JSON In", controls.transform, new Vector2(0.125f, 0.08f), new Vector2(0.245f, 0.92f));
+            var exportJson = CreateButton("JSON Out", controls.transform, new Vector2(0.25f, 0.08f), new Vector2(0.38f, 0.92f));
+            var gps = CreateButton("GPS", controls.transform, new Vector2(0.89f, 0.08f), new Vector2(1f, 0.92f));
             import.onClick.AddListener(() => SceneManager.LoadScene("MapSetup"));
-            copy.onClick.AddListener(navigation.CopyCurrentJson);
+            importJson.onClick.AddListener(() => { importJsonOnSetup = true; SceneManager.LoadScene("MapSetup"); });
             exportJson.onClick.AddListener(navigation.ExportCurrentJson);
             gps.onClick.AddListener(navigation.EnableLocation);
             navigation.SetGpsReadout(CreateGpsReadout());
-            topViewButton = CreateButton("TOP VIEW", canvas.transform, new Vector2(0.02f, 0.92f), new Vector2(0.19f, 0.98f));
+            topViewButton = CreateButton("Top", controls.transform, new Vector2(0.385f, 0.08f), new Vector2(0.48f, 0.92f));
             topViewAction = ApplyTopView;
             topViewButton.onClick.AddListener(topViewAction);
-            export3DButton = CreateButton("EXPORT 3D", canvas.transform, new Vector2(0.20f, 0.92f), new Vector2(0.39f, 0.98f));
+            export3DButton = CreateButton("GLB", controls.transform, new Vector2(0.755f, 0.08f), new Vector2(0.885f, 0.92f));
             export3DAction = navigation.ExportCurrent3D;
             export3DButton.onClick.AddListener(export3DAction);
-            CreateButton("FIT", canvas.transform, new Vector2(0.40f, 0.92f), new Vector2(0.54f, 0.98f)).onClick.AddListener(navigation.FitBuilding);
-            CreateButton("RESET", canvas.transform, new Vector2(0.55f, 0.92f), new Vector2(0.74f, 0.98f)).onClick.AddListener(navigation.ResetCamera);
+            CreateButton("Fit", controls.transform, new Vector2(0.485f, 0.08f), new Vector2(0.58f, 0.92f)).onClick.AddListener(navigation.FitBuilding);
+            CreateButton("Reset", controls.transform, new Vector2(0.585f, 0.08f), new Vector2(0.75f, 0.92f)).onClick.AddListener(navigation.ResetCamera);
             statusReadout = CreateStatusReadout(); statusAction = message => { if (statusReadout != null) statusReadout.text = message; }; navigation.StatusChanged += statusAction;
             export3DButton.interactable = navigation.CanExportCurrentModel;
             exportAvailabilityAction = available => { if (export3DButton != null) export3DButton.interactable = available; };
@@ -99,6 +118,19 @@ namespace ARNav.Runtime.App
         private void ApplyTopView()
         {
             navigation?.FitBuildingTopDown();
+        }
+
+        private System.Collections.IEnumerator OpenPendingJson()
+        {
+            yield return null;
+            setup?.ImportMapJson();
+        }
+
+        private void CreateTitle(string value)
+        {
+            var go = new GameObject("AppTitle", typeof(RectTransform), typeof(Text)); go.transform.SetParent(safeRoot, false);
+            var rect = go.GetComponent<RectTransform>(); rect.anchorMin = new Vector2(0.04f, 0.90f); rect.anchorMax = new Vector2(0.96f, 0.97f); rect.offsetMin = rect.offsetMax = Vector2.zero;
+            var label = go.GetComponent<Text>(); label.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"); label.fontSize = 23; label.color = Color.white; label.alignment = TextAnchor.MiddleLeft; label.text = value; label.raycastTarget = false;
         }
 
         private void OnDestroy()
@@ -113,9 +145,9 @@ namespace ARNav.Runtime.App
 
         private Text CreateStatusReadout()
         {
-            var go = new GameObject("WorkflowStatus", typeof(RectTransform), typeof(Text)); go.transform.SetParent(canvas.transform, false);
-            var rect = go.GetComponent<RectTransform>(); rect.anchorMin = new Vector2(0.02f, 0.83f); rect.anchorMax = new Vector2(0.98f, 0.91f); rect.offsetMin = rect.offsetMax = Vector2.zero;
-            var label = go.GetComponent<Text>(); label.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"); label.fontSize = 16; label.color = Color.white; label.alignment = TextAnchor.MiddleLeft; label.raycastTarget = false; label.text = "Import an image or saved JSON map.";
+            var go = new GameObject("WorkflowStatus", typeof(RectTransform), typeof(Text)); go.transform.SetParent(safeRoot, false);
+            var rect = go.GetComponent<RectTransform>(); rect.anchorMin = new Vector2(0.04f, 0.80f); rect.anchorMax = new Vector2(0.96f, 0.89f); rect.offsetMin = rect.offsetMax = Vector2.zero;
+            var label = go.GetComponent<Text>(); label.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"); label.fontSize = 16; label.color = Color.white; label.alignment = TextAnchor.MiddleLeft; label.raycastTarget = false; label.text = "";
             var outline = go.AddComponent<Outline>(); outline.effectColor = Color.black; outline.effectDistance = new Vector2(2f, -2f);
             return label;
         }
@@ -132,7 +164,7 @@ namespace ARNav.Runtime.App
         private GameObject CreatePanel(string name, Vector2 min, Vector2 max)
         {
             var go = new GameObject(name, typeof(RectTransform), typeof(Image));
-            go.transform.SetParent(canvas.transform, false);
+            go.transform.SetParent(safeRoot, false);
             var rect = go.GetComponent<RectTransform>(); rect.anchorMin = min; rect.anchorMax = max; rect.offsetMin = rect.offsetMax = Vector2.zero;
             go.GetComponent<Image>().color = new Color(0.04f, 0.05f, 0.07f, 0.92f);
             return go;
@@ -140,7 +172,7 @@ namespace ARNav.Runtime.App
 
         private Text CreateGpsReadout()
         {
-            var go = new GameObject("GPSReadout", typeof(RectTransform), typeof(Text)); go.transform.SetParent(canvas.transform, false);
+            var go = new GameObject("GPSReadout", typeof(RectTransform), typeof(Text)); go.transform.SetParent(safeRoot, false);
             var rect = go.GetComponent<RectTransform>(); rect.anchorMin = new Vector2(0.64f, 0.67f); rect.anchorMax = new Vector2(0.98f, 0.82f); rect.offsetMin = rect.offsetMax = Vector2.zero;
             var text = go.GetComponent<Text>(); text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"); text.fontSize = 13; text.color = Color.white; text.alignment = TextAnchor.UpperRight; text.raycastTarget = false; text.text = "GPS off"; var outline = go.AddComponent<Outline>(); outline.effectColor = Color.black; outline.effectDistance = new Vector2(2f, -2f); return text;
         }
