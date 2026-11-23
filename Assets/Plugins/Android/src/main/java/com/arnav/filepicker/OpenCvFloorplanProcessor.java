@@ -2,16 +2,13 @@ package com.arnav.filepicker;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import org.opencv.android.OpenCVLoader;
 import org.opencv.core.Core;
 import org.opencv.core.CvType;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfPoint;
-import org.opencv.core.Point;
 import org.opencv.core.Rect;
 import org.opencv.core.Scalar;
 import org.opencv.core.Size;
@@ -273,15 +270,16 @@ public final class OpenCvFloorplanProcessor {
                 }
             }
         }
-        boolean[] exterior = new boolean[size]; ArrayDeque<Integer> queue = new ArrayDeque<>();
-        for (int x = 0; x < width; x++) { seed(x, barrier, exterior, queue); seed((height - 1) * width + x, barrier, exterior, queue); }
-        for (int y = 0; y < height; y++) { seed(y * width, barrier, exterior, queue); seed(y * width + width - 1, barrier, exterior, queue); }
-        while (!queue.isEmpty()) {
-            int p = queue.removeFirst(), x = p % width, y = p / width;
-            if (x > 0) seed(p - 1, barrier, exterior, queue);
-            if (x + 1 < width) seed(p + 1, barrier, exterior, queue);
-            if (y > 0) seed(p - width, barrier, exterior, queue);
-            if (y + 1 < height) seed(p + width, barrier, exterior, queue);
+        boolean[] exterior = new boolean[size];
+        int[] queue = new int[size]; int head = 0, tail = 0;
+        for (int x = 0; x < width; x++) { tail = seed(x, barrier, exterior, queue, tail); tail = seed((height - 1) * width + x, barrier, exterior, queue, tail); }
+        for (int y = 0; y < height; y++) { tail = seed(y * width, barrier, exterior, queue, tail); tail = seed(y * width + width - 1, barrier, exterior, queue, tail); }
+        while (head < tail) {
+            int p = queue[head++], x = p % width, y = p / width;
+            if (x > 0) tail = seed(p - 1, barrier, exterior, queue, tail);
+            if (x + 1 < width) tail = seed(p + 1, barrier, exterior, queue, tail);
+            if (y > 0) tail = seed(p - width, barrier, exterior, queue, tail);
+            if (y + 1 < height) tail = seed(p + width, barrier, exterior, queue, tail);
         }
         byte[] floor = new byte[size]; int inside = 0;
         for (int p = 0; p < size; p++) if (wall[p] == 0 && !exterior[p]) { floor[p] = (byte) 255; inside++; }
@@ -328,7 +326,8 @@ public final class OpenCvFloorplanProcessor {
                 if (raw[yy * width + xx] != 0) return true;
         return false;
     }
-    private static void seed(int p, byte[] barrier, boolean[] exterior, ArrayDeque<Integer> queue) {
-        if (barrier[p] == 0 && !exterior[p]) { exterior[p] = true; queue.addLast(p); }
+    private static int seed(int p, byte[] barrier, boolean[] exterior, int[] queue, int tail) {
+        if (barrier[p] == 0 && !exterior[p]) { exterior[p] = true; queue[tail++] = p; }
+        return tail;
     }
 }
