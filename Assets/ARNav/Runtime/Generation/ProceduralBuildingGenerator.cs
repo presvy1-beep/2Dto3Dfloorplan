@@ -15,13 +15,11 @@ namespace ARNav.Runtime.Generation
         [SerializeField] private Material wallMaterial;
         [SerializeField] private float floorUvScaleMetres = 1f;
         [SerializeField] private float wallHeightMetres = WallPathGeometryConfiguration.DefaultWallHeightMeters;
-        [SerializeField] private float baseThicknessMetres = WallPathGeometryConfiguration.DefaultBaseThicknessMeters;
         [SerializeField] private bool generateColliders = true;
         private GameObject generatedRoot;
         private readonly List<Mesh> ownedMeshes = new List<Mesh>();
         private Material runtimeFloorMaterial;
         private Material runtimeWallMaterial;
-        private Material runtimeBaseMaterial;
         private Texture2D runtimeFloorTexture;
         private Texture2D runtimeWallTexture;
         public Bounds GeneratedBounds { get; private set; }
@@ -143,29 +141,19 @@ namespace ARNav.Runtime.Generation
         private static string FormatWidthRange(List<LocalWallPathData> paths)
         { var min=float.PositiveInfinity;var max=0f;foreach(var path in paths)if(path!=null&&path.widthMetres>0){min=Mathf.Min(min,path.widthMetres);max=Mathf.Max(max,path.widthMetres);}return float.IsPositiveInfinity(min)?"none":min.ToString("0.###")+"-"+max.ToString("0.###")+"m"; }
         private static void UpdateBounds(Bounds local, Matrix4x4 matrix, ref Bounds output, ref bool set) { var corners = new[] { new Vector3(local.min.x, local.min.y, local.min.z), new Vector3(local.max.x, local.min.y, local.min.z), new Vector3(local.min.x, local.max.y, local.min.z), new Vector3(local.max.x, local.max.y, local.min.z), new Vector3(local.min.x, local.min.y, local.max.z), new Vector3(local.max.x, local.min.y, local.max.z), new Vector3(local.min.x, local.max.y, local.max.z), new Vector3(local.max.x, local.max.y, local.max.z) }; foreach (var corner in corners) { var point = matrix.MultiplyPoint3x4(corner); if (!set) { output = new Bounds(point, Vector3.zero); set = true; } else output.Encapsulate(point); } }
-        private Material GetFloorMaterial() { if (runtimeFloorMaterial == null) runtimeFloorMaterial = floorMaterial != null ? CreateTexturedMaterial(floorMaterial, true) : CreateTexturedMaterial("ARNav Tiled Floor", new Color(0.86f, 0.88f, 0.90f, 1f), true); return runtimeFloorMaterial; }
-        private Material GetWallMaterial() { if (runtimeWallMaterial == null) runtimeWallMaterial = wallMaterial != null ? CreateTexturedMaterial(wallMaterial, false) : CreateTexturedMaterial("ARNav Plaster Wall", new Color(0.34f, 0.43f, 0.52f, 1f), false); return runtimeWallMaterial; }
+        private Material GetFloorMaterial() { if (runtimeFloorMaterial == null) runtimeFloorMaterial = CreateTexturedMaterial(Resources.Load<Material>("Materials/ARNavFloor"), true); return runtimeFloorMaterial; }
+        private Material GetWallMaterial() { if (runtimeWallMaterial == null) runtimeWallMaterial = CreateTexturedMaterial(Resources.Load<Material>("Materials/ARNavWall"), false); return runtimeWallMaterial; }
         private Material CreateTexturedMaterial(Material source, bool floor)
         {
-            // The scene references legacy Standard materials. Treat them only as
-            // assignment markers; the runtime architectural palette is canonical.
+            if (source == null || source.shader == null || !source.shader.isSupported)
+                throw new InvalidOperationException("Bundled architecture material is missing or unsupported. Reinstall the application.");
             var tint = floor ? new Color(0.86f, 0.88f, 0.90f, 1f) : new Color(0.34f, 0.43f, 0.52f, 1f);
-            return CreateTexturedMaterial(source.name + (floor ? " (Runtime Tile)" : " (Runtime Plaster)"), tint, floor);
-        }
-        private Material CreateTexturedMaterial(string name, Color tint, bool floor)
-        {
-            // The scene's serialized materials use Unity's built-in Standard
-            // shader. Preserve their tint, but create the runtime renderer material
-            // with URP Unlit so Android URP cannot silently replace it with white.
-            var shader = Shader.Find("Universal Render Pipeline/Unlit");
-            if (shader == null) throw new InvalidOperationException("URP Unlit shader is unavailable for generated architecture.");
-            var material = new Material(shader) { name = name, enableInstancing = true };
+            var material = new Material(source) { name = floor ? "ARNav Tiled Floor" : "ARNav Plaster Wall", enableInstancing = true };
             if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", tint);
-            var textureProperty = material.HasProperty("_BaseMap") ? "_BaseMap" : material.HasProperty("_MainTex") ? "_MainTex" : null;
-            if (textureProperty == null) { DestroyObject(material); throw new InvalidOperationException("URP Unlit shader has no supported base texture property."); }
+            var property = material.HasProperty("_BaseMap") ? "_BaseMap" : material.HasProperty("_MainTex") ? "_MainTex" : null;
+            if (property == null) { DestroyObject(material); throw new InvalidOperationException("Bundled architecture material has no texture property."); }
             var texture = floor ? (runtimeFloorTexture ?? (runtimeFloorTexture = MakeFloorTexture())) : (runtimeWallTexture ?? (runtimeWallTexture = MakeWallTexture()));
-            texture.wrapMode = TextureWrapMode.Repeat;
-            material.SetTexture(textureProperty, texture);
+            material.SetTexture(property, texture);
             return material;
         }
         private static Texture2D MakeFloorTexture()
@@ -191,8 +179,6 @@ namespace ARNav.Runtime.Generation
             }
             texture.SetPixels(pixels); texture.Apply(false, true); return texture;
         }
-        private Material GetBaseMaterial() { if (runtimeBaseMaterial == null) runtimeBaseMaterial = CreateMaterial("ARNav Base Light Yellow", WallPresentationConfiguration.BaseColor); return runtimeBaseMaterial; }
-        private static Material CreateMaterial(string name, Color color) { var shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Universal Render Pipeline/Unlit"); if (shader == null) throw new InvalidOperationException("No URP-compatible material shader is available."); var material = new Material(shader) { name = name }; material.color = color; if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", color); if (material.HasProperty("_Color")) material.SetColor("_Color", color); return material; }
         private static void DestroyObject(UnityEngine.Object value) { if (value == null) return; if (Application.isPlaying) Destroy(value); else DestroyImmediate(value); }
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
         private static Bounds GetWorldRendererBounds(Renderer[] renderers)
@@ -208,6 +194,6 @@ namespace ARNav.Runtime.Generation
             return hasBounds ? bounds : new Bounds();
         }
 #endif
-        private void OnDestroy() { ClearGeneratedBuilding(); DestroyObject(runtimeFloorMaterial); DestroyObject(runtimeWallMaterial); DestroyObject(runtimeBaseMaterial); DestroyObject(runtimeFloorTexture); DestroyObject(runtimeWallTexture); }
+        private void OnDestroy() { ClearGeneratedBuilding(); DestroyObject(runtimeFloorMaterial); DestroyObject(runtimeWallMaterial); DestroyObject(runtimeFloorTexture); DestroyObject(runtimeWallTexture); }
     }
 }

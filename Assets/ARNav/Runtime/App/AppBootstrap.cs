@@ -11,11 +11,8 @@ namespace ARNav.Runtime.App
         {
             // Lock orientation before the first user-facing scene is shown. Android's
             // manifest is also portrait-only; this prevents a sensor/landscape flash.
-            Screen.autorotateToPortrait = false;
-            Screen.autorotateToPortraitUpsideDown = false;
-            Screen.autorotateToLandscapeLeft = false;
-            Screen.autorotateToLandscapeRight = false;
-            Screen.orientation = ScreenOrientation.Portrait;
+            // Android Player Settings and the Activity manifest select portrait
+            // before Unity's splash. Do not request it again after the first frame.
             DisplayOrientationState.Reset();
             StartCoroutine(SettlePortraitDisplay());
             if (GetComponent<MapSessionHost>() == null) gameObject.AddComponent<MapSessionHost>();
