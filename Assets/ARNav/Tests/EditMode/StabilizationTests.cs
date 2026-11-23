@@ -113,5 +113,22 @@ namespace ARNav.Tests.EditMode
             Assert.That(measured.centroid.x, Is.EqualTo(1.5f).Within(0.0001));
             Assert.That(measured.centroid.z, Is.EqualTo(1f).Within(0.0001));
         }
+
+        [Test]
+        public void RasterPreferredRoomMeasurementsFollowOccupiedRuns()
+        {
+            var room = new RoomData { id = "raster", preferRasterGeometry = true,
+                polygon = new LocalPolygon { vertices = new List<LocalPoint>
+                { new LocalPoint(0, 0), new LocalPoint(4, 0), new LocalPoint(4, 3), new LocalPoint(0, 3) } },
+                rasterRuns = new List<LocalRasterRun>
+                { new LocalRasterRun { minX = 0, maxX = 1, minZ = 0, maxZ = 1 },
+                  new LocalRasterRun { minX = 1, maxX = 2, minZ = 0, maxZ = 1 } } };
+            Assert.IsTrue(RoomMeasurements.TryFromRoom(room, out var measured));
+            Assert.That(measured.areaSquareMetres, Is.EqualTo(2).Within(0.0001));
+            Assert.That(measured.boundingLengthMetres, Is.EqualTo(2).Within(0.0001));
+            Assert.That(measured.centroid.x, Is.EqualTo(1).Within(0.0001));
+            room.rasterRuns.Add(new LocalRasterRun { minX = 0.5f, maxX = 1.5f, minZ = 0, maxZ = 1 });
+            Assert.IsFalse(RoomMeasurements.TryFromRoom(room, out _), "Overlapping cells must not double-count area.");
+        }
     }
 }

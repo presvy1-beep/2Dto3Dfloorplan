@@ -17,7 +17,11 @@ namespace ARNav.Core.Geometry
         {
             result = null;
             var vertices = room == null || room.polygon == null ? null : room.polygon.vertices;
-            if (vertices == null || vertices.Count < 3 || !PolygonIsValid(vertices)) return false;
+            var polygonValid = vertices != null && vertices.Count >= 3 && PolygonIsValid(vertices);
+            if (room != null && room.rasterRuns != null && room.rasterRuns.Count > 0 &&
+                (room.preferRasterGeometry || room.holes != null && room.holes.Count > 0 || !polygonValid))
+                return TryFromRasterRuns(room.rasterRuns, out result);
+            if (!polygonValid) return false;
             var minX = double.PositiveInfinity; var maxX = double.NegativeInfinity;
             var minZ = double.PositiveInfinity; var maxZ = double.NegativeInfinity;
             foreach (var point in vertices)
@@ -44,6 +48,38 @@ namespace ARNav.Core.Geometry
             };
             return true;
         }
+
+        private static bool TryFromRasterRuns(IList<LocalRasterRun> runs, out RoomMeasurements result)
+        {
+            result = null;
+            var sorted = new List<LocalRasterRun>(runs);
+            foreach (var run in sorted)
+                if (run == null || !Finite(run.minX) || !Finite(run.maxX) || !Finite(run.minZ) || !Finite(run.maxZ) ||
+                    run.maxX <= run.minX || run.maxZ <= run.minZ) return false;
+            sorted.Sort((a, b) => a.minX.CompareTo(b.minX));
+            var minX = double.PositiveInfinity; var maxX = double.NegativeInfinity;
+            var minZ = double.PositiveInfinity; var maxZ = double.NegativeInfinity;
+            var area = 0d; var weightedX = 0d; var weightedZ = 0d;
+            for (var i = 0; i < sorted.Count; i++)
+            {
+                var run = sorted[i];
+                for (var j = i + 1; j < sorted.Count && sorted[j].minX < run.maxX; j++)
+                    if (sorted[j].minZ < run.maxZ && sorted[j].maxZ > run.minZ) return false;
+                var cellArea = (double)(run.maxX - run.minX) * (run.maxZ - run.minZ);
+                area += cellArea;
+                weightedX += cellArea * ((double)run.minX + run.maxX) * 0.5;
+                weightedZ += cellArea * ((double)run.minZ + run.maxZ) * 0.5;
+                minX = Math.Min(minX, run.minX); maxX = Math.Max(maxX, run.maxX);
+                minZ = Math.Min(minZ, run.minZ); maxZ = Math.Max(maxZ, run.maxZ);
+            }
+            if (area <= 0) return false;
+            result = new RoomMeasurements { boundingLengthMetres = (float)(maxX - minX),
+                boundingBreadthMetres = (float)(maxZ - minZ), areaSquareMetres = (float)area,
+                centroid = new LocalPoint((float)(weightedX / area), (float)(weightedZ / area)) };
+            return true;
+        }
+
+        private static bool Finite(float value) { return !float.IsNaN(value) && !float.IsInfinity(value); }
 
         private static bool PolygonIsValid(IList<LocalPoint> vertices)
         { return PolygonTriangulator.Triangulate(vertices).success; }

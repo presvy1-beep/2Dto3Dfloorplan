@@ -13,12 +13,12 @@
 | GPS status could misstate altitude and freshness | Readouts printed any altitude as a number and did not update when a fix aged out. | Altitude is shown unavailable when vertical accuracy is missing; readouts include horizontal accuracy and stale/waiting states, checked every two seconds. |
 | Setup screen showed inert controls | The overlay created Angle and Scale sliders with null callbacks. | Removed those sliders and kept the working measured-scale calibration panel accessible. |
 
-`RoomMeasurements.TryFromRoom` derives bounding length/breadth, actual polygon area, and centroid from the saved room polygon and holes. These are derived values; no second copy is persisted in JSON.
+`RoomMeasurements.TryFromRoom` derives bounding length/breadth, area, and centroid from the saved room polygon and holes, or from the occupied raster runs when the floor mesh uses them. Overlapping raster runs fail measurement instead of double-counting. These are derived values; no second copy is persisted in JSON.
 
 ## Verified
 
-- Unity 6000.6.0f1 Edit Mode after the UI cleanup: 137 passed, 0 failed, 0 skipped (`Logs/stabilization-editmode-cleanup.xml`). This includes seven new stabilization cases.
-- Android release APK build from commit `b2a78cb`: succeeded with 0 errors and 24 warnings. `Builds/arn.apk` is 33,471,113 bytes. The manifest has `com.arnav.filepicker.ArnavUnityActivity`, arm64, minimum SDK 26, target SDK 36, and fine/coarse location permissions. A later status-text outline change has Edit Mode coverage but was not included in this APK.
+- Unity 6000.6.0f1 Edit Mode after raster measurement correction: 138 passed, 0 failed, 0 skipped (`Logs/stabilization-editmode-raster.xml`). This includes eight new stabilization cases.
+- Android release APK build from commit `8ca3428`: succeeded with 0 errors and 23 warnings. `Builds/arn.apk` is 33,468,021 bytes. The manifest has `com.arnav.filepicker.ArnavUnityActivity`, arm64, minimum SDK 26, target SDK 36, and fine/coarse location permissions. The raster measurement correction is still pending a final APK rebuild.
 - Existing tests cover rectangular grids, L/U shapes, doorway gaps, text suppression, wall continuity/junctions, serialization, generation, GLB header/chunks, camera state, and location quality. Test fixtures do not prove arbitrary architectural plans are reconstructed correctly.
 - `git diff --check` found no whitespace errors in changed source.
 
