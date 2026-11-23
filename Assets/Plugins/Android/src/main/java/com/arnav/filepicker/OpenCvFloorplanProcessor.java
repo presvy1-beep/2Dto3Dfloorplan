@@ -182,7 +182,14 @@ public final class OpenCvFloorplanProcessor {
             // excluded by the endpoint/topology requirement.
             boolean thinWall = longSide >= minimum * .10 && longSide >= shortSide * 4 && shortSide <= minimum * .05 && nearMain &&
                 (connectedAtEnd || exteriorEdge || longSide >= minimum * .3);
-            keep[i] = sizeable || thinWall;
+            int alignment = Math.max(8, minimum / 40);
+            boolean alignsWithPerimeter = Math.abs(x - mainLeft) <= alignment || Math.abs(x + w - mainRight) <= alignment ||
+                    Math.abs(y - mainTop) <= alignment || Math.abs(y + h - mainBottom) <= alignment;
+            // A doorway arc can make the bounding box of a horizontal wall too
+            // tall for the thin-component rule. Measure the sustained black band
+            // inside that component instead of discarding its actual wall stroke.
+            boolean substantialBand = alignsWithPerimeter && hasStructuralBand(ids, width, height, i, x, y, w, h, minimum);
+            keep[i] = sizeable || thinWall || substantialBand;
         }
         for (int p = 0; p < ids.length; p++) if (ids[p] > 0 && keep[ids[p]]) result[p] = (byte) 255;
         return result;
@@ -192,6 +199,25 @@ public final class OpenCvFloorplanProcessor {
         for (int yy = Math.max(0, y - radius); yy <= Math.min(height - 1, y + radius); yy++)
             for (int xx = Math.max(0, x - radius); xx <= Math.min(width - 1, x + radius); xx++)
                 if (labels[yy * width + xx] == dominant) return true;
+        return false;
+    }
+
+    private static boolean hasStructuralBand(int[] labels, int width, int height, int id, int x, int y, int w, int h, int minimum) {
+        int minLength = Math.max(18, minimum / 5);
+        int consecutive = 0;
+        for (int yy = y; yy < y + h; yy++) {
+            int run = 0, longest = 0;
+            for (int xx = x; xx < x + w; xx++) { run = labels[yy * width + xx] == id ? run + 1 : 0; longest = Math.max(longest, run); }
+            consecutive = longest >= minLength ? consecutive + 1 : 0;
+            if (consecutive >= 3) return true;
+        }
+        consecutive = 0;
+        for (int xx = x; xx < x + w; xx++) {
+            int run = 0, longest = 0;
+            for (int yy = y; yy < y + h; yy++) { run = labels[yy * width + xx] == id ? run + 1 : 0; longest = Math.max(longest, run); }
+            consecutive = longest >= minLength ? consecutive + 1 : 0;
+            if (consecutive >= 3) return true;
+        }
         return false;
     }
 
@@ -222,29 +248,13 @@ public final class OpenCvFloorplanProcessor {
             Rect box = Imgproc.boundingRect(contour);
             boolean stairSized = box.width >= width * .14 && box.height >= Math.max(12, thickness * 5) &&
                 box.width >= box.height * 2.2 && Imgproc.contourArea(contour) >= box.width * box.height * .4;
-            if (stairSized && hasRepeatedHatchBands(wall, width, box)) for (int y = Math.max(0, box.y - thickness); y < Math.min(height, box.y + box.height + thickness); y++) {
+            if (stairSized) for (int y = Math.max(0, box.y - thickness); y < Math.min(height, box.y + box.height + thickness); y++) {
                 if (y <= box.y - thickness + 2 || y >= box.y + box.height + thickness - 3) continue;
                 for (int x = Math.max(0, box.x - thickness); x < Math.min(width, box.x + box.width + thickness); x++)
                     if (x < right - thickness * 2) wall[y * width + x] = 0;
             }
             contour.release();
         }
-    }
-
-    /** Reject dense rectangular stair hatching without erasing a solid wall band. */
-    private static boolean hasRepeatedHatchBands(byte[] wall, int width, Rect box) {
-        int bands = 0, gaps = 0;
-        boolean inBand = false, inGap = false;
-        for (int y = box.y; y < box.y + box.height; y++) {
-            int dark = 0;
-            for (int x = box.x; x < box.x + box.width; x++) if (wall[y * width + x] != 0) dark++;
-            boolean band = dark >= box.width * .62;
-            boolean gap = dark <= box.width * .18;
-            if (band && !inBand) bands++;
-            if (gap && !inGap && bands > 0) gaps++;
-            inBand = band; inGap = gap;
-        }
-        return bands >= 3 && gaps >= 2;
     }
 
     private static void reinforceExteriorBottom(byte[] wall, byte[] raw, int width, int height, int thickness) {

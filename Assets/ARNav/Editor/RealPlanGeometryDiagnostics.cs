@@ -18,11 +18,12 @@ namespace ARNav.Editor
             var args = Environment.GetCommandLineArgs();
             var root = ValueAfter(args, "-realPlanDiagnosticRoot") ?? Directory.GetCurrentDirectory();
             var output = ValueAfter(args, "-realPlanDiagnosticOutput") ?? Path.Combine(root, "Logs", "real-plan-geometry");
+            var nativeDirectory = ValueAfter(args, "-realPlanNativeDir") ?? Path.Combine(root, "Logs", "opencv-native-runs");
             Directory.CreateDirectory(output);
             try
             {
-                RenderOne(root, output, "f1", 640, 480, .03f);
-                RenderOne(root, output, "fp2", 477, 642, .03f);
+                RenderOne(nativeDirectory, output, "f1", 640, 480, .03f);
+                RenderOne(nativeDirectory, output, "fp2", 477, 642, .03f);
                 Debug.Log("[ARNav][RealPlanDiagnostic] Wrote actual generation-pipeline renders to " + output);
                 EditorApplication.Exit(0);
             }
@@ -33,11 +34,11 @@ namespace ARNav.Editor
             }
         }
 
-        private static void RenderOne(string root, string output, string id, int width, int height, float metresPerPixel)
+        private static void RenderOne(string nativeDirectory, string output, string id, int width, int height, float metresPerPixel)
         {
             var downloads = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + "\\Downloads";
             var sourcePath = Path.Combine(downloads, id + ".jpeg");
-            var nativePath = Path.Combine(root, "Logs", "opencv-native-runs", id == "f1" ? "A_baseline.bin" : "B.bin");
+            var nativePath = Path.Combine(nativeDirectory, id == "f1" ? "A_baseline.bin" : "B.bin");
             if (!File.Exists(sourcePath) || !File.Exists(nativePath))
                 throw new FileNotFoundException("Expected source JPEG and cached production OpenCV binary result: " + sourcePath + " ; " + nativePath);
 
