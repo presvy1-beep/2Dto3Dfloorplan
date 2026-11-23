@@ -1,4 +1,8 @@
+using System;
 using System.Collections.Generic;
+using System.Security.Cryptography;
+using System.Text;
+using System.Reflection;
 using ARNav.Core.Data;
 using ARNav.Core.Geometry;
 using ARNav.Core.Generation;
@@ -83,7 +87,73 @@ namespace ARNav.Tests.EditMode
                 foreach (var filter in generator.GeneratedRoot.GetComponentsInChildren<MeshFilter>(true))
                     Assert.AreNotEqual("PresentationBase", filter.gameObject.name);
             }
-            finally { Object.DestroyImmediate(owner); }
+            finally { UnityEngine.Object.DestroyImmediate(owner); }
+        }
+
+        [Test]
+        public void BuildingGeometryHashIsStableAcrossAtoBtoAAndWallsAreExtruded()
+        {
+            var a = TestMapFactory.CreateTinyThreeRoomMap();
+            a.floors[0].architecturalWallPaths = new List<LocalWallPathData>
+            { new LocalWallPathData { id = 1, widthMetres = .2f, points = new List<LocalPoint>{new LocalPoint(0,0),new LocalPoint(8,0),new LocalPoint(8,6)} } };
+            var b = TestMapFactory.CreateTinyThreeRoomMap();
+            b.floors[0].architecturalWallPaths = new List<LocalWallPathData>
+            { new LocalWallPathData { id = 1, widthMetres = .2f, points = new List<LocalPoint>{new LocalPoint(0,0),new LocalPoint(4,0)} } };
+            var owner = new GameObject("AtoBtoAGeometryTest"); var generator = owner.AddComponent<ProceduralBuildingGenerator>();
+            try
+            {
+                Assert.IsTrue(generator.Generate(a, out var errorA), errorA); var hashA1 = MeshHash(generator.GeneratedRoot); var meshCountA = generator.GeneratedRoot.GetComponentsInChildren<MeshFilter>(true).Length;
+                Assert.IsTrue(RuntimeGlbExporter.TryExport(generator.GeneratedRoot, out var glb, out var glbError), glbError);
+                var glbJsonLength = (int)System.BitConverter.ToUInt32(glb.bytes, 12);
+                var glbJson = Encoding.UTF8.GetString(glb.bytes, 20, glbJsonLength);
+                StringAssert.Contains("ARNav Plaster Wall", glbJson);
+                StringAssert.Contains("ARNav Tiled Floor", glbJson);
+                StringAssert.Contains("baseColorFactor", glbJson);
+                var wall = generator.GeneratedRoot.GetComponentsInChildren<MeshFilter>(true);
+                var wallMesh = System.Array.Find(wall, f => f.name == "VectorWallMass").sharedMesh;
+                Assert.That(wallMesh.bounds.max.y - wallMesh.bounds.min.y, Is.EqualTo(2.7f).Within(.001f));
+                var floorMesh = System.Array.Find(wall, f => f.name == "FloorMesh").sharedMesh;
+                Assert.That(wallMesh.bounds.min.y, Is.EqualTo(floorMesh.bounds.min.y).Within(.001f), "Wall bases must meet floor elevation.");
+                Assert.That(floorMesh.bounds.size.x, Is.LessThan(20f), "Floor must use room geometry, not an oversized presentation slab.");
+                Assert.IsTrue(generator.Generate(b, out var errorB), errorB);
+                Assert.IsTrue(generator.Generate(a, out var errorA2), errorA2); var hashA2 = MeshHash(generator.GeneratedRoot);
+                Assert.AreEqual(hashA1, hashA2, "A mesh geometry must survive rebuilding B in between.");
+                Assert.AreEqual(meshCountA, generator.GeneratedRoot.GetComponentsInChildren<MeshFilter>(true).Length, "Rebuild must not duplicate generated meshes.");
+            }
+            finally { UnityEngine.Object.DestroyImmediate(owner); }
+        }
+
+        [Test]
+        public void RuntimeMaterialsHaveDistinctReusableTexturesAndColors()
+        {
+            var owner = new GameObject("MaterialTextureTest"); var generator = owner.AddComponent<ProceduralBuildingGenerator>();
+            try
+            {
+                var floor = (Material)typeof(ProceduralBuildingGenerator).GetMethod("GetFloorMaterial", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(generator, null);
+                var wall = (Material)typeof(ProceduralBuildingGenerator).GetMethod("GetWallMaterial", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(generator, null);
+                var floorMap = floor.HasProperty("_BaseMap") ? floor.GetTexture("_BaseMap") : floor.GetTexture("_MainTex");
+                var wallMap = wall.HasProperty("_BaseMap") ? wall.GetTexture("_BaseMap") : wall.GetTexture("_MainTex");
+                Assert.IsNotNull(floorMap); Assert.IsNotNull(wallMap); Assert.AreNotSame(floorMap, wallMap);
+                Assert.AreEqual(TextureWrapMode.Repeat, floorMap.wrapMode); Assert.AreEqual(TextureWrapMode.Repeat, wallMap.wrapMode);
+                var floorColor = floor.HasProperty("_BaseColor") ? floor.GetColor("_BaseColor") : floor.color;
+                var wallColor = wall.HasProperty("_BaseColor") ? wall.GetColor("_BaseColor") : wall.color;
+                Assert.That(floorColor.r, Is.GreaterThan(wallColor.r));
+                Assert.That(wallColor.b, Is.GreaterThan(wallColor.r));
+            }
+            finally { UnityEngine.Object.DestroyImmediate(owner); }
+        }
+
+        private static string MeshHash(GameObject root)
+        {
+            var entries = new List<string>();
+            foreach (var filter in root.GetComponentsInChildren<MeshFilter>(true))
+            {
+                var mesh = filter.sharedMesh; if (mesh == null) continue;
+                var text = new StringBuilder(filter.name).Append('|');
+                foreach (var v in mesh.vertices) text.Append(v.x.ToString("R", System.Globalization.CultureInfo.InvariantCulture)).Append(',').Append(v.y.ToString("R", System.Globalization.CultureInfo.InvariantCulture)).Append(',').Append(v.z.ToString("R", System.Globalization.CultureInfo.InvariantCulture)).Append(';');
+                text.Append('|'); foreach (var i in mesh.triangles) text.Append(i).Append(','); entries.Add(text.ToString());
+            }
+            entries.Sort(StringComparer.Ordinal); using (var sha = SHA256.Create()) return System.Convert.ToBase64String(sha.ComputeHash(Encoding.UTF8.GetBytes(string.Join("\n", entries))));
         }
 
         [Test]

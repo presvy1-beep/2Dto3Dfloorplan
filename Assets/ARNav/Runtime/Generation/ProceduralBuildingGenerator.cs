@@ -22,6 +22,8 @@ namespace ARNav.Runtime.Generation
         private Material runtimeFloorMaterial;
         private Material runtimeWallMaterial;
         private Material runtimeBaseMaterial;
+        private Texture2D runtimeFloorTexture;
+        private Texture2D runtimeWallTexture;
         public Bounds GeneratedBounds { get; private set; }
         public GameObject GeneratedRoot { get { return generatedRoot; } }
         public string GeneratedProjectId { get; private set; }
@@ -86,6 +88,7 @@ namespace ARNav.Runtime.Generation
                     floorPlan.source.elevationMetres, Mathf.Max(0.1f, wallHeightMetres), out var diagnostic);
                 if (wallMesh != null)
                 {
+                    ApplyArchitecturalWallUvs(wallMesh, floorUvScaleMetres);
                     meshes.Add(wallMesh); RuntimeMeshFactory.AddMeshObject(wallsRoot, "VectorWallMass", wallMesh, GetWallMaterial(), generateColliders); UpdateBounds(wallMesh.bounds, wallsRoot.transform.localToWorldMatrix, ref bounds, ref boundsSet);
                     // A wall-bounds rectangle fills courtyards, corridors, and exterior
                     // voids of irregular plans. Room meshes already provide the floor.
@@ -121,13 +124,68 @@ namespace ARNav.Runtime.Generation
         private static WallData FindWall(FloorData floor, string id) { foreach (var wall in floor.walls) if (wall != null && wall.id == id) return wall; return null; }
         private static Mesh CreateWallMaskMesh(List<LocalRasterRun> runs, float baseY, float height)
         { return ArchitecturalWallMaskMeshBuilder.Build(runs, baseY, height); }
+        private static void ApplyArchitecturalWallUvs(Mesh mesh, float scale)
+        {
+            if (mesh == null) return;
+            scale = Mathf.Max(0.001f, scale);
+            var vertices = mesh.vertices; var uv = new Vector2[vertices.Length];
+            for (var i = 0; i < vertices.Length; i++) uv[i] = new Vector2(vertices[i].x / scale, vertices[i].y / scale);
+            mesh.uv = uv;
+        }
         private void AddRasterFallback(FloorGenerationPlan floorPlan, GameObject wallsRoot, List<Mesh> meshes, ref Bounds bounds, ref bool boundsSet)
-        { var mesh = CreateWallMaskMesh(floorPlan.source.architecturalWallRuns, floorPlan.source.elevationMetres, Mathf.Max(0.1f, wallHeightMetres)); if (mesh != null) { meshes.Add(mesh); RuntimeMeshFactory.AddMeshObject(wallsRoot, "RasterWallMaskFallback", mesh, GetWallMaterial(), generateColliders); UpdateBounds(mesh.bounds, wallsRoot.transform.localToWorldMatrix, ref bounds, ref boundsSet); } }
+        { var mesh = CreateWallMaskMesh(floorPlan.source.architecturalWallRuns, floorPlan.source.elevationMetres, Mathf.Max(0.1f, wallHeightMetres)); if (mesh != null) { ApplyArchitecturalWallUvs(mesh, floorUvScaleMetres); meshes.Add(mesh); RuntimeMeshFactory.AddMeshObject(wallsRoot, "RasterWallMaskFallback", mesh, GetWallMaterial(), generateColliders); UpdateBounds(mesh.bounds, wallsRoot.transform.localToWorldMatrix, ref bounds, ref boundsSet); } }
         private static string FormatWidthRange(List<LocalWallPathData> paths)
         { var min=float.PositiveInfinity;var max=0f;foreach(var path in paths)if(path!=null&&path.widthMetres>0){min=Mathf.Min(min,path.widthMetres);max=Mathf.Max(max,path.widthMetres);}return float.IsPositiveInfinity(min)?"none":min.ToString("0.###")+"-"+max.ToString("0.###")+"m"; }
         private static void UpdateBounds(Bounds local, Matrix4x4 matrix, ref Bounds output, ref bool set) { var corners = new[] { new Vector3(local.min.x, local.min.y, local.min.z), new Vector3(local.max.x, local.min.y, local.min.z), new Vector3(local.min.x, local.max.y, local.min.z), new Vector3(local.max.x, local.max.y, local.min.z), new Vector3(local.min.x, local.min.y, local.max.z), new Vector3(local.max.x, local.min.y, local.max.z), new Vector3(local.min.x, local.max.y, local.max.z), new Vector3(local.max.x, local.max.y, local.max.z) }; foreach (var corner in corners) { var point = matrix.MultiplyPoint3x4(corner); if (!set) { output = new Bounds(point, Vector3.zero); set = true; } else output.Encapsulate(point); } }
-        private Material GetFloorMaterial() { if (floorMaterial != null) return floorMaterial; if (runtimeFloorMaterial == null) runtimeFloorMaterial = CreateMaterial("ARNav Floor", new Color(0.96f, 0.97f, 0.98f, 1f)); return runtimeFloorMaterial; }
-        private Material GetWallMaterial() { if (runtimeWallMaterial == null) runtimeWallMaterial = CreateMaterial("ARNav Wall White", WallPresentationConfiguration.WallColor); return runtimeWallMaterial; }
+        private Material GetFloorMaterial() { if (runtimeFloorMaterial == null) runtimeFloorMaterial = floorMaterial != null ? CreateTexturedMaterial(floorMaterial, true) : CreateTexturedMaterial("ARNav Tiled Floor", new Color(0.86f, 0.88f, 0.90f, 1f), true); return runtimeFloorMaterial; }
+        private Material GetWallMaterial() { if (runtimeWallMaterial == null) runtimeWallMaterial = wallMaterial != null ? CreateTexturedMaterial(wallMaterial, false) : CreateTexturedMaterial("ARNav Plaster Wall", new Color(0.34f, 0.43f, 0.52f, 1f), false); return runtimeWallMaterial; }
+        private Material CreateTexturedMaterial(Material source, bool floor)
+        {
+            var material = new Material(source) { name = source.name + (floor ? " (Runtime Tile)" : " (Runtime Plaster)") };
+            var textureProperty = material.HasProperty("_BaseMap") ? "_BaseMap" : material.HasProperty("_MainTex") ? "_MainTex" : null;
+            if (textureProperty != null)
+            {
+                var texture = floor ? (runtimeFloorTexture ?? (runtimeFloorTexture = MakeFloorTexture())) : (runtimeWallTexture ?? (runtimeWallTexture = MakeWallTexture()));
+                material.SetTexture(textureProperty, texture);
+            }
+            return material;
+        }
+        private Material CreateTexturedMaterial(string name, Color tint, bool floor)
+        {
+            var material = CreateMaterial(name, tint);
+            var textureProperty = material.HasProperty("_BaseMap") ? "_BaseMap" : material.HasProperty("_MainTex") ? "_MainTex" : null;
+            if (textureProperty != null)
+            {
+                var texture = floor ? (runtimeFloorTexture ?? (runtimeFloorTexture = MakeFloorTexture())) : (runtimeWallTexture ?? (runtimeWallTexture = MakeWallTexture()));
+                texture.wrapMode = TextureWrapMode.Repeat;
+                material.SetTexture(textureProperty, texture);
+            }
+            material.enableInstancing = true;
+            return material;
+        }
+        private static Texture2D MakeFloorTexture()
+        {
+            const int size = 64; var texture = new Texture2D(size, size, TextureFormat.RGB24, false, true) { name = "ARNav Subtle Floor Tile", filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Repeat };
+            var pixels = new Color[size * size];
+            for (var y = 0; y < size; y++) for (var x = 0; x < size; x++)
+            {
+                var grout = x < 2 || y < 2;
+                var tone = grout ? 0.72f : (((x / 32 + y / 32) & 1) == 0 ? 0.98f : 0.94f);
+                pixels[y * size + x] = new Color(tone, tone, tone, 1f);
+            }
+            texture.SetPixels(pixels); texture.Apply(false, true); return texture;
+        }
+        private static Texture2D MakeWallTexture()
+        {
+            const int size = 32; var texture = new Texture2D(size, size, TextureFormat.RGB24, false, true) { name = "ARNav Fine Plaster", filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Repeat };
+            var pixels = new Color[size * size];
+            for (var y = 0; y < size; y++) for (var x = 0; x < size; x++)
+            {
+                var grain = ((x * 17 + y * 29 + (x * y) % 13) % 9) * 0.004f;
+                pixels[y * size + x] = new Color(0.88f + grain, 0.90f + grain, 0.92f + grain, 1f);
+            }
+            texture.SetPixels(pixels); texture.Apply(false, true); return texture;
+        }
         private Material GetBaseMaterial() { if (runtimeBaseMaterial == null) runtimeBaseMaterial = CreateMaterial("ARNav Base Light Yellow", WallPresentationConfiguration.BaseColor); return runtimeBaseMaterial; }
         private static Material CreateMaterial(string name, Color color) { var shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Universal Render Pipeline/Unlit"); if (shader == null) throw new InvalidOperationException("No URP-compatible material shader is available."); var material = new Material(shader) { name = name }; material.color = color; if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", color); if (material.HasProperty("_Color")) material.SetColor("_Color", color); return material; }
         private static void DestroyObject(UnityEngine.Object value) { if (value == null) return; if (Application.isPlaying) Destroy(value); else DestroyImmediate(value); }
@@ -145,6 +203,6 @@ namespace ARNav.Runtime.Generation
             return hasBounds ? bounds : new Bounds();
         }
 #endif
-        private void OnDestroy() { ClearGeneratedBuilding(); DestroyObject(runtimeFloorMaterial); DestroyObject(runtimeWallMaterial); DestroyObject(runtimeBaseMaterial); }
+        private void OnDestroy() { ClearGeneratedBuilding(); DestroyObject(runtimeFloorMaterial); DestroyObject(runtimeWallMaterial); DestroyObject(runtimeBaseMaterial); DestroyObject(runtimeFloorTexture); DestroyObject(runtimeWallTexture); }
     }
 }

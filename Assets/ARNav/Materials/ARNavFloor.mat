@@ -32,7 +32,7 @@ Material:
     - _Glossiness: 0.5
     - _Metallic: 0
     m_Colors:
-    - _Color: {r: 0.96, g: 0.97, b: 0.98, a: 1}
+    - _Color: {r: 0.86, g: 0.88, b: 0.90, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1
 --- !u!114 &2070128745269911839
