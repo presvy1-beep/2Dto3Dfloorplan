@@ -18,7 +18,7 @@
 ## Verified
 
 - Unity 6000.6.0f1 Edit Mode after raster measurement correction: 138 passed, 0 failed, 0 skipped (`Logs/stabilization-editmode-raster.xml`). This includes eight new stabilization cases.
-- Android release APK build from commit `8ca3428`: succeeded with 0 errors and 23 warnings. `Builds/arn.apk` is 33,468,021 bytes. The manifest has `com.arnav.filepicker.ArnavUnityActivity`, arm64, minimum SDK 26, target SDK 36, and fine/coarse location permissions. The raster measurement correction is still pending a final APK rebuild.
+- Android release APK build from commit `ad97179`: succeeded with 0 errors and 23 warnings. `Builds/arn.apk` is 33,473,481 bytes. The manifest has `com.arnav.filepicker.ArnavUnityActivity`, arm64, minimum SDK 26, target SDK 36, and fine/coarse location permissions.
 - Existing tests cover rectangular grids, L/U shapes, doorway gaps, text suppression, wall continuity/junctions, serialization, generation, GLB header/chunks, camera state, and location quality. Test fixtures do not prove arbitrary architectural plans are reconstructed correctly.
 - `git diff --check` found no whitespace errors in changed source.
 
