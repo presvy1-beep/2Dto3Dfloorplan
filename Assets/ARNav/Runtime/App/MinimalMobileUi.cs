@@ -50,12 +50,12 @@ namespace ARNav.Runtime.App
         private void BuildSetupControls()
         {
             Hide("TopBar", "PrimaryActions", "AnnotationEditorPanel", "ScaleCalibrationPanel", "GeoCalibrationPanel", "LocationHudText", "LocationMockPanel", "Enable GPS");
-            controls = CreatePanel("ARNavControls", new Vector2(0.02f, 0.01f), new Vector2(0.98f, 0.20f));
-            var import = CreateButton("Import", controls.transform, new Vector2(0.01f, 0.58f), new Vector2(0.23f, 0.94f));
+            controls = CreatePanel("ARNavControls", new Vector2(0.02f, 0.01f), new Vector2(0.98f, 0.11f));
+            var import = CreateButton("Import", controls.transform, new Vector2(0.01f, 0.08f), new Vector2(0.23f, 0.92f));
             setupImportButton = import; setupImportLabel = import.GetComponentInChildren<Text>();
-            var copy = CreateButton("Copy JSON", controls.transform, new Vector2(0.26f, 0.58f), new Vector2(0.49f, 0.94f));
-            var build = CreateButton("BUILD 3D", controls.transform, new Vector2(0.52f, 0.58f), new Vector2(0.76f, 0.94f));
-            var gps = CreateButton("GPS", controls.transform, new Vector2(0.79f, 0.58f), new Vector2(0.99f, 0.94f));
+            var copy = CreateButton("Copy JSON", controls.transform, new Vector2(0.26f, 0.08f), new Vector2(0.49f, 0.92f));
+            var build = CreateButton("BUILD 3D", controls.transform, new Vector2(0.52f, 0.08f), new Vector2(0.76f, 0.92f));
+            var gps = CreateButton("GPS", controls.transform, new Vector2(0.79f, 0.08f), new Vector2(0.99f, 0.92f));
             import.onClick.AddListener(setup.ImportFloorPlan);
             analysis = GetComponent<FloorPlanAnalysisController>();
             if (analysis != null) { analysisStateAction = analyzing => { if (setupImportLabel != null) setupImportLabel.text = analyzing ? "Cancel analysis" : "Import"; }; analysis.AnalysisStateChanged += analysisStateAction; }
@@ -68,8 +68,6 @@ namespace ARNav.Runtime.App
             statusReadout = CreateStatusReadout(); statusAction = message => { if (statusReadout != null) statusReadout.text = message; }; setup.StatusChanged += statusAction;
             var location = FindObjectOfType<LocationTrackingController>();
             if (location != null) { location.gameObject.SetActive(true); gps.onClick.AddListener(location.EnableLocation); location.SetMinimalReadout(CreateGpsReadout()); }
-            CreateSlider("Angle", controls.transform, new Vector2(0.03f, 0.08f), new Vector2(0.48f, 0.43f), 0.5f, null);
-            CreateSlider("Scale", controls.transform, new Vector2(0.52f, 0.08f), new Vector2(0.97f, 0.43f), 0.5f, null);
         }
 
         private void BuildNavigationControls()

@@ -11,12 +11,13 @@
 | GLB failures were opaque | Export was silently refused when model identity was stale; callback errors were summarized without detail. | Visible refusal, save progress and completion messages; document writes compare bytes copied to source length; mesh exporter handles invalid mesh data as a returned error. |
 | Camera orbit was absent in the active 3D scene | `NavigationController` used a fixed yaw of 35 degrees; `BuildingPreviewController` input code was not the active preview path. | Added Input System mouse orbit/scroll and touch orbit/pinch to `NavigationController`, with UI hit checks, Fit and Reset. |
 | GPS status could misstate altitude and freshness | Readouts printed any altitude as a number and did not update when a fix aged out. | Altitude is shown unavailable when vertical accuracy is missing; readouts include horizontal accuracy and stale/waiting states, checked every two seconds. |
+| Setup screen showed inert controls | The overlay created Angle and Scale sliders with null callbacks. | Removed those sliders and kept the working measured-scale calibration panel accessible. |
 
 `RoomMeasurements.TryFromRoom` derives bounding length/breadth, actual polygon area, and centroid from the saved room polygon and holes. These are derived values; no second copy is persisted in JSON.
 
 ## Verified
 
-- Unity 6000.6.0f1 Edit Mode after the final UI readout change: 137 passed, 0 failed, 0 skipped (`Logs/stabilization-editmode-postui.xml`). This includes seven new stabilization cases.
+- Unity 6000.6.0f1 Edit Mode after the UI cleanup: 137 passed, 0 failed, 0 skipped (`Logs/stabilization-editmode-cleanup.xml`). This includes seven new stabilization cases.
 - Android release APK build from commit `b2a78cb`: succeeded with 0 errors and 24 warnings. `Builds/arn.apk` is 33,471,113 bytes. The manifest has `com.arnav.filepicker.ArnavUnityActivity`, arm64, minimum SDK 26, target SDK 36, and fine/coarse location permissions. A later status-text outline change has Edit Mode coverage but was not included in this APK.
 - Existing tests cover rectangular grids, L/U shapes, doorway gaps, text suppression, wall continuity/junctions, serialization, generation, GLB header/chunks, camera state, and location quality. Test fixtures do not prove arbitrary architectural plans are reconstructed correctly.
 - `git diff --check` found no whitespace errors in changed source.
