@@ -20,3 +20,12 @@ An uncommitted, temporary Unity Edit Mode probe loaded both Downloads images, ex
 The landscape balcony boundary is light gray, reaching roughly RGB 190–230 at this resolution; several of its strokes are below the dark-wall threshold. The portrait plan still has attached furniture/fixture outlines that share raster components with walls, plus many short hatch strokes. These require review and correction in the existing geometry editor. The fallback estimated floor can include area outside an irregular footprint, so its boundary must be reviewed before treating it as architectural data.
 
 Unity 6000.6.0f1 built the Android APK successfully (0 errors, 23 warnings), and `adb install -r` succeeded on the connected device without clearing app data. The phone disconnected while locked before the app screen could be inspected. Android visual quality and interaction therefore still need an unlocked-device walkthrough; an Edit Mode mesh build alone does not prove that either real plan produces a fully accurate final model.
+
+## OpenCV replacement probe (same date)
+
+The prior findings above describe the legacy detector. The new Android detector was run directly on both original Downloads JPEGs using OpenCV 4.14.0's official Windows Java binaries and the same `OpenCvFloorplanProcessor.java` as the Android build. Mask images were inspected locally; they remain ignored under `Logs/` rather than committing the user's drawings.
+
+- Landscape (640 × 480): 10,553 structural-mask pixels and 155,222 floor-mask pixels. The resulting mask keeps the main rectangular floor, bathroom/bedroom partitions, hallway boundary and bottom exterior wall. A bathroom doorway gap remains open. The balcony's pale outline is absent because it is not black, and its floor is consequently not reconstructed.
+- Portrait (477 × 642): document crop `(32, 53, 297, 557)` excludes the right title block and page border. The mask has 12,527 wall pixels and 135,926 floor pixels. The central living area is a continuous floor, and car/plant drawings are largely excluded. A stair hatch region is hollowed instead of becoming a filled raised block. Some attached kitchen/fixture outlines remain, and some short structural edges are uncertain.
+
+These are **mask observations**, not a verified Android 3D rendering. The generated Unity model and GLB still require a device pass with both images. Earlier wall height was only 0.35 m; it is now 2.7 m, but the new Android preview has not yet been visually verified.

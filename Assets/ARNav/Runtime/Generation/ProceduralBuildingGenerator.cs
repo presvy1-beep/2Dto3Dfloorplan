@@ -106,7 +106,7 @@ namespace ARNav.Runtime.Generation
             }
             else if (floorPlan.usesRasterWallMask)
             {
-                Debug.LogWarning("[ARNav][WallPaths] No serialized wallPaths on floor " + floorPlan.source.id + "; raw wallRuns fallback used.");
+                Debug.Log("[ARNav][Walls] Building the saved structural wall mask for floor " + floorPlan.source.id + ".");
                 AddRasterFallback(floorPlan, wallsRoot, meshes, ref bounds, ref boundsSet);
             }
             foreach (var wallPlan in floorPlan.walls)
@@ -126,7 +126,7 @@ namespace ARNav.Runtime.Generation
         private static string FormatWidthRange(List<LocalWallPathData> paths)
         { var min=float.PositiveInfinity;var max=0f;foreach(var path in paths)if(path!=null&&path.widthMetres>0){min=Mathf.Min(min,path.widthMetres);max=Mathf.Max(max,path.widthMetres);}return float.IsPositiveInfinity(min)?"none":min.ToString("0.###")+"-"+max.ToString("0.###")+"m"; }
         private static void UpdateBounds(Bounds local, Matrix4x4 matrix, ref Bounds output, ref bool set) { var corners = new[] { new Vector3(local.min.x, local.min.y, local.min.z), new Vector3(local.max.x, local.min.y, local.min.z), new Vector3(local.min.x, local.max.y, local.min.z), new Vector3(local.max.x, local.max.y, local.min.z), new Vector3(local.min.x, local.min.y, local.max.z), new Vector3(local.max.x, local.min.y, local.max.z), new Vector3(local.min.x, local.max.y, local.max.z), new Vector3(local.max.x, local.max.y, local.max.z) }; foreach (var corner in corners) { var point = matrix.MultiplyPoint3x4(corner); if (!set) { output = new Bounds(point, Vector3.zero); set = true; } else output.Encapsulate(point); } }
-        private Material GetFloorMaterial() { if (floorMaterial != null) return floorMaterial; if (runtimeFloorMaterial == null) runtimeFloorMaterial = CreateMaterial("ARNav Floor", new Color(0.82f, 0.84f, 0.87f, 1f)); return runtimeFloorMaterial; }
+        private Material GetFloorMaterial() { if (floorMaterial != null) return floorMaterial; if (runtimeFloorMaterial == null) runtimeFloorMaterial = CreateMaterial("ARNav Floor", new Color(0.96f, 0.97f, 0.98f, 1f)); return runtimeFloorMaterial; }
         private Material GetWallMaterial() { if (runtimeWallMaterial == null) runtimeWallMaterial = CreateMaterial("ARNav Wall White", WallPresentationConfiguration.WallColor); return runtimeWallMaterial; }
         private Material GetBaseMaterial() { if (runtimeBaseMaterial == null) runtimeBaseMaterial = CreateMaterial("ARNav Base Light Yellow", WallPresentationConfiguration.BaseColor); return runtimeBaseMaterial; }
         private static Material CreateMaterial(string name, Color color) { var shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Universal Render Pipeline/Unlit"); if (shader == null) throw new InvalidOperationException("No URP-compatible material shader is available."); var material = new Material(shader) { name = name }; material.color = color; if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", color); if (material.HasProperty("_Color")) material.SetColor("_Color", color); return material; }
