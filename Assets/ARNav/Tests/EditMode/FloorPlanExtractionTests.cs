@@ -1,5 +1,8 @@
 using ARNav.Core.Data;
+using ARNav.Core.Generation;
+using ARNav.Core.Geometry;
 using ARNav.Runtime.Extraction;
+using ARNav.Runtime.Generation;
 using NUnit.Framework;
 using System;
 
@@ -106,6 +109,20 @@ namespace ARNav.Tests.EditMode
             Assert.Less(floor.detectionConfidence, .5f);
             Assert.IsTrue(result.message.Contains("estimated"));
             Assert.IsFalse(floor.rasterRuns.Exists(run => run.minX < 30 || run.maxX > 251));
+            var project = MapProjectData.Create("estimated", "Estimated Floor Test");
+            var derivedFloor = new FloorData { id = "ground", sourceAnnotations = result.annotations };
+            Assert.IsTrue(PixelToLocalGeometryConverter.TryRegenerate(derivedFloor,
+                new ScaleCalibrationData { isValid = true, isEstimated = true, metresPerPixel = .02f },
+                width, height, new MapGenerationDefaults(), out var validation), string.Join("; ", validation.errors));
+            project.floors.Add(derivedFloor);
+            var plan = BuildingGenerationPlanner.Build(project);
+            Assert.IsTrue(plan.IsValid, string.Join("; ", plan.errors));
+            var roomPlan = plan.floors[0].rooms.Find(room => room.source.id == "estimated_interior_1");
+            Assert.IsNotNull(roomPlan);
+            Assert.IsTrue(roomPlan.rasterFallback);
+            var mesh = RuntimeMeshFactory.CreateFloorMesh(roomPlan, 0, 1);
+            try { Assert.IsNotNull(mesh); Assert.Greater(mesh.vertexCount, 0); }
+            finally { if (mesh != null) UnityEngine.Object.DestroyImmediate(mesh); }
         }
 
         [Test]
