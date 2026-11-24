@@ -13,6 +13,8 @@ namespace ARNav.Runtime.App
             // manifest is also portrait-only; this prevents a sensor/landscape flash.
             // Android Player Settings and the Activity manifest select portrait
             // before Unity's splash. Do not request it again after the first frame.
+            Debug.Log("[ARNav][Orientation] boot screen=" + Screen.width + "x" + Screen.height +
+                      " Screen.orientation=" + Screen.orientation + " deviceOrientation=" + Input.deviceOrientation);
             DisplayOrientationState.Reset();
             StartCoroutine(SettlePortraitDisplay());
             if (GetComponent<MapSessionHost>() == null) gameObject.AddComponent<MapSessionHost>();
@@ -28,13 +30,17 @@ namespace ARNav.Runtime.App
                 if (stableFrames >= 2 && DisplayOrientationState.TryCommitStablePortrait())
                 {
                     Debug.Log("[ARNav][Display] Stable portrait ready frame=" + frame + " size=" + Screen.width + "x" + Screen.height +
-                              " safeArea=" + Screen.safeArea + " aspect=" + (Screen.height > 0 ? ((float)Screen.width / Screen.height).ToString("0.####") : "0"));
+                              " safeArea=" + Screen.safeArea + " Screen.orientation=" + Screen.orientation +
+                              " deviceOrientation=" + Input.deviceOrientation +
+                              " aspect=" + (Screen.height > 0 ? ((float)Screen.width / Screen.height).ToString("0.####") : "0"));
                     yield break;
                 }
                 yield return null;
             }
             DisplayOrientationState.TryCommitStablePortrait();
-            Debug.LogWarning("[ARNav][Display] Portrait settling timeout; using current size=" + Screen.width + "x" + Screen.height + " safeArea=" + Screen.safeArea);
+            Debug.LogWarning("[ARNav][Display] Portrait settling timeout; using current size=" + Screen.width + "x" + Screen.height +
+                             " safeArea=" + Screen.safeArea + " Screen.orientation=" + Screen.orientation +
+                             " deviceOrientation=" + Input.deviceOrientation);
         }
         private void Start() { if (SceneManager.GetActiveScene().name != setupSceneName) SceneManager.LoadScene(setupSceneName); }
         private void Update() { DisplayOrientationState.RefreshIfChanged(); }
