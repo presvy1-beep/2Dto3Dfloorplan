@@ -9,10 +9,8 @@ namespace ARNav.Runtime.App
         [SerializeField] private string setupSceneName = "MapSetup";
         private void Awake()
         {
-            // Lock orientation before the first user-facing scene is shown. Android's
-            // manifest is also portrait-only; this prevents a sensor/landscape flash.
-            // Android Player Settings and the Activity manifest select portrait
-            // before Unity's splash. Do not request it again after the first frame.
+            // The native activity and Unity both follow Android's user orientation.
+            // Wait for stable portrait dimensions before applying portrait safe areas.
             Debug.Log("[ARNav][Orientation] boot screen=" + Screen.width + "x" + Screen.height +
                       " Screen.orientation=" + Screen.orientation + " deviceOrientation=" + Input.deviceOrientation);
             DisplayOrientationState.Reset();

@@ -8,8 +8,8 @@ import com.unity3d.player.UnityPlayerGameActivity;
 /** Unity activity that forwards the system document-picker result to the small ARNav bridge. */
 public class ArnavUnityActivity extends UnityPlayerGameActivity {
     @Override protected void onCreate(Bundle savedInstanceState) {
-        // The manifest locks portrait before this activity and the Unity
-        // splash are created. Do not issue a competing orientation request here.
+        // The manifest follows the user's device orientation before Unity's
+        // splash is created. Do not issue a competing orientation request here.
         super.onCreate(savedInstanceState);
     }
 
