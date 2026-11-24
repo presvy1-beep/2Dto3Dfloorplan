@@ -41,11 +41,9 @@ namespace ARNav.Runtime.Generation
             try
             {
                 foreach (var floorPlan in plan.floors) GenerateFloor(next, floorPlan, project, nextMeshes, ref bounds, ref boundsSet);
-                // The imported JSON map plane is vertically inverted. Reflect the
-                // complete generated hierarchy once about its Z-centre. Navigation
-                // floor meshes added later and NavMesh sources inherit this transform.
-                next.transform.position = new Vector3(0f, 0f, bounds.center.z * 2f);
-                next.transform.localScale = new Vector3(1f, 1f, -1f);
+                // Canonical pixel-to-local conversion already maps image-up to
+                // positive Z. Keep the generated hierarchy unreflected so top
+                // view, JSON coordinates, NavMesh, and GLB share the same axes.
                 ClearGeneratedBuilding(); generatedRoot = next; ownedMeshes.AddRange(nextMeshes); GeneratedBounds = bounds;
                 GeneratedProjectId = project.projectId;
                 GeneratedSourceSha256 = project.sourceImage == null ? null : project.sourceImage.sha256;

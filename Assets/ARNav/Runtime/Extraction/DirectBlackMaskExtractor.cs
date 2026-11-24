@@ -6,10 +6,10 @@ using UnityEngine;
 
 namespace ARNav.Runtime.Extraction
 {
-    /// <summary>Deterministic color-only conversion. Every dark pixel is wall material, including dark annotations.</summary>
+    /// <summary>Deterministic black candidates followed by a compact structural-stroke filter.</summary>
     public sealed class DirectBlackMaskExtractor : IFloorPlanExtractor
     {
-        public const byte BlackThreshold = 96;
+        public const byte BlackThreshold = 150;
 
         public FloorPlanExtractionResult Extract(FloorPlanImageData image, FloorPlanCropRegion region)
         {
@@ -36,28 +36,83 @@ namespace ARNav.Runtime.Extraction
                     if (value <= BlackThreshold) mask[targetRow + x] = 1;
                 }
             }
-            result.annotations.wallRuns = BuildRuns(mask, width, height);
+            result.diagnostics.binaryBlackMask = mask;
+            var walls = StructuralBlackMaskFilter.Process(mask, width, height, out var typicalWidth);
+            result.diagnostics.architecturalWallMask = walls;
+            result.diagnostics.estimatedWallThicknessPixels = typicalWidth;
+            result.annotations.wallPathDiagnostics.estimatedWidthPixels = typicalWidth;
+            result.annotations.wallRuns = BuildRuns(walls, width, height);
             result.annotations.wallThreshold = BlackThreshold;
             long wallPixels = 0;
             foreach (var run in result.annotations.wallRuns) wallPixels += (long)(run.maxX - run.minX) * (long)(run.maxY - run.minY);
             result.annotations.architecturalWallPixelCount = wallPixels;
-            if (wallPixels == 0) { result.message = "No black pixels were found. Architectural walls must be black."; return result; }
+            if (wallPixels == 0) { result.message = "No supported black wall bands were found. Architectural walls must be black."; return result; }
 
-            // The outermost dark pixel on each occupied row defines a scanline of
-            // floor occupancy. This follows L-shaped outlines without a full-page
-            // rectangle. Wall pixels are omitted; door gaps remain open in the wall mask.
+            // Derive floor scanlines from supported wall spans. JPEGs can have a
+            // pale exterior segment while the surrounding rows still establish
+            // the building bay; bridge only between valid wall-supported rows.
+            // Existing narrower spans remain intact for L-shaped footprints.
             image.ReportStage(FloorPlanAnalysisStage.DetectingRoomRegions);
             var floor = new byte[mask.Length];
             var minX = width; var maxX = 0; var minY = height; var maxY = 0;
+            var leftEdge = new int[height]; var rightEdge = new int[height];
+            var minimumSpan = Math.Max(8, Math.Min(width, height) / 4);
             for (var y = 0; y < height; y++)
             {
                 image.ThrowIfCancellationRequested();
                 var left = width; var right = -1;
-                for (var x = 0; x < width; x++) if (mask[y * width + x] != 0) { left = Math.Min(left, x); right = x; }
-                if (right - left < 2) continue;
+                for (var x = 0; x < width; x++) if (walls[y * width + x] != 0) { left = Math.Min(left, x); right = x; }
+                leftEdge[y] = right - left >= minimumSpan ? left : width;
+                rightEdge[y] = right - left >= minimumSpan ? right : -1;
+            }
+            var maximumBridge = Math.Max(4, Math.Min(width, height) / 2);
+            for (var y = 0; y < height; y++)
+            {
+                image.ThrowIfCancellationRequested();
+                var left = leftEdge[y]; var right = rightEdge[y];
+                if (right < left)
+                {
+                    var above = y - 1; var below = y + 1;
+                    while (above >= 0 && y - above <= maximumBridge && rightEdge[above] < leftEdge[above]) above--;
+                    while (below < height && below - y <= maximumBridge && rightEdge[below] < leftEdge[below]) below++;
+                    if (above < 0 || below >= height || y - above > maximumBridge || below - y > maximumBridge) continue;
+                    left = Math.Min(leftEdge[above], leftEdge[below]);
+                    right = Math.Max(rightEdge[above], rightEdge[below]);
+                }
                 minX = Math.Min(minX, left); maxX = Math.Max(maxX, right + 1);
                 minY = Math.Min(minY, y); maxY = Math.Max(maxY, y + 1);
-                for (var x = left; x <= right; x++) if (mask[y * width + x] == 0) floor[y * width + x] = 1;
+                for (var x = left; x <= right; x++) if (walls[y * width + x] == 0) floor[y * width + x] = 1;
+            }
+            // Long horizontal perimeter bands can bound a room even when a
+            // pale vertical wall disappears from the black mask. Fill between
+            // the top and bottom structural hits in each supported column.
+            // This also keeps the outside corner of an L-shaped plan empty.
+            var topEdge = new int[width]; var bottomEdge = new int[width];
+            for (var x = 0; x < width; x++)
+            {
+                if ((x & 63) == 0) image.ThrowIfCancellationRequested();
+                var top = height; var bottom = -1;
+                for (var y = 0; y < height; y++) if (walls[y * width + x] != 0)
+                { top = Math.Min(top, y); bottom = y; }
+                topEdge[x] = bottom - top >= minimumSpan ? top : height;
+                bottomEdge[x] = bottom - top >= minimumSpan ? bottom : -1;
+            }
+            for (var x = 0; x < width; x++)
+            {
+                if ((x & 63) == 0) image.ThrowIfCancellationRequested();
+                var top = topEdge[x]; var bottom = bottomEdge[x];
+                if (bottom < top)
+                {
+                    var left = x - 1; var right = x + 1;
+                    while (left >= 0 && x - left <= maximumBridge && bottomEdge[left] < topEdge[left]) left--;
+                    while (right < width && right - x <= maximumBridge && bottomEdge[right] < topEdge[right]) right++;
+                    if (left < 0 || right >= width || x - left > maximumBridge || right - x > maximumBridge) continue;
+                    top = Math.Min(topEdge[left], topEdge[right]);
+                    bottom = Math.Max(bottomEdge[left], bottomEdge[right]);
+                }
+                minX = Math.Min(minX, x); maxX = Math.Max(maxX, x + 1);
+                minY = Math.Min(minY, top); maxY = Math.Max(maxY, bottom + 1);
+                for (var y = top; y <= bottom; y++) if (walls[y * width + x] == 0) floor[y * width + x] = 1;
             }
             var floorRuns = BuildRuns(floor, width, height);
             if (floorRuns.Count == 0) { result.message = "Black strokes were found, but no floor region could be derived."; return result; }
@@ -72,7 +127,7 @@ namespace ARNav.Runtime.Extraction
             result.annotations.rooms.Add(room);
             result.succeeded = true;
             result.confidence = .5f;
-            result.message = "Black pixels extruded as walls. Estimated scale — dimensions are approximate; dark furniture and text may also be extruded.";
+            result.message = "Supported black wall bands extruded. Estimated scale — dimensions are approximate; dark furniture and text can still be misclassified.";
             return result;
         }
 

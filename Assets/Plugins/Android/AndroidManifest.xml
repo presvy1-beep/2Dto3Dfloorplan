@@ -4,7 +4,7 @@
         <activity android:name="com.arnav.filepicker.ArnavUnityActivity"
                   android:theme="@style/BaseUnityGameActivityTheme"
                   android:launchMode="singleTask"
-                  android:screenOrientation="portrait"
+                  android:screenOrientation="reversePortrait"
                   android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale|layoutDirection|density"
                   android:exported="true">
             <intent-filter>

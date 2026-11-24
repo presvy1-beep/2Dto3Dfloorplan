@@ -60,7 +60,6 @@ namespace ARNav.Runtime.Navigation
         private CameraViewState cameraView;
         private string cameraProjectId;
         private bool rebuildInProgress;
-        private float mapReflectionZ;
         private int startupViewStabilizationFrames;
         private int lastDisplayGeneration;
         private bool orbitDragging;
@@ -72,7 +71,7 @@ namespace ARNav.Runtime.Navigation
         {
             error = null;
             if (route == null || floor == null) { error = "No active route."; return false; }
-            var canonicalCorners = new List<LocalPoint>(route.rawCorners.Count); foreach (var point in route.rawCorners) canonicalCorners.Add(new LocalPoint(point.x, 2f * mapReflectionZ - point.z));
+            var canonicalCorners = new List<LocalPoint>(route.rawCorners.Count); foreach (var point in route.rawCorners) canonicalCorners.Add(new LocalPoint(point.x, point.z));
             if (RouteGeometryValidator.CrossesSolidWall(canonicalCorners, floor, out error)) return false;
             if (RouteGeometryValidator.EntersNonWalkableRegion(canonicalCorners, floor, out error)) return false;
             return true;
@@ -168,7 +167,6 @@ namespace ARNav.Runtime.Navigation
                     (floor.architecturalWallRuns == null || floor.architecturalWallRuns.Count == 0))
                 { SetStatus("No saved geometry is available. Import and analyze a floor plan first."); return; }
             if (!generator.Generate(project, out var generationError)) { SetStatus(generationError); return; }
-            mapReflectionZ = generator.GeneratedBounds.center.z;
             if (!NavigationFeatureConfiguration.NavigationFeaturesEnabled)
             {
                 if (navMeshBuilder != null) navMeshBuilder.Clear();
@@ -225,7 +223,7 @@ namespace ARNav.Runtime.Navigation
             if (navMeshBuilder == null || navMeshBuilder.State != RuntimeNavMeshState.Ready) { SetStatus("NavMesh is not ready."); return; }
             var destinations = DestinationRooms();
             if (destinationDropdown == null || destinationDropdown.value < 0 || destinationDropdown.value >= destinations.Count) { SetStatus("Select a destination room."); return; }
-            var startCanonical = liveStartAvailable ? liveStart : ReadManualStart(); var start = new LocalPoint(startCanonical.x, 2f * mapReflectionZ - startCanonical.z); var room = destinations[destinationDropdown.value];
+            var startCanonical = liveStartAvailable ? liveStart : ReadManualStart(); var start = new LocalPoint(startCanonical.x, startCanonical.z); var room = destinations[destinationDropdown.value];
             var anchor = roomAnchorsRoot == null ? null : roomAnchorsRoot.transform.Find("RoomNavAnchor_" + room.id);
             if (anchor == null) { SetStatus("Destination room anchor is missing."); return; }
             var anchorMetadata = anchor.GetComponent<GeneratedRoomNavAnchor>();
@@ -257,8 +255,8 @@ namespace ARNav.Runtime.Navigation
                     if (destinationAnchor == null || !ResolveAnchorRoutePoint(destinationAnchor)) continue;
                     var directCanonical = new[]
                     {
-                        new LocalPoint(startAnchor.navMeshPosition.x, 2f * mapReflectionZ - startAnchor.navMeshPosition.z),
-                        new LocalPoint(destinationAnchor.navMeshPosition.x, 2f * mapReflectionZ - destinationAnchor.navMeshPosition.z)
+                        new LocalPoint(startAnchor.navMeshPosition.x, startAnchor.navMeshPosition.z),
+                        new LocalPoint(destinationAnchor.navMeshPosition.x, destinationAnchor.navMeshPosition.z)
                     };
                     if (!NavigationRouteService.TryCalculateBetween(new LocalPoint(startAnchor.navMeshPosition.x, startAnchor.navMeshPosition.z), floor, destinationAnchor.roomId, new LocalPoint(destinationAnchor.navMeshPosition.x, destinationAnchor.navMeshPosition.z), navMeshBuilder.Settings, out var candidate, out _)) continue;
                     var directCrossesWall = RouteGeometryValidator.CrossesSolidWall(directCanonical, floor, out _);
@@ -310,7 +308,7 @@ namespace ARNav.Runtime.Navigation
         private bool ValidateRouteReadOnly(NavigationRoute candidate)
         {
             if (candidate == null || !candidate.valid) return false;
-            var canonical = new List<LocalPoint>(candidate.rawCorners.Count); foreach (var point in candidate.rawCorners) canonical.Add(new LocalPoint(point.x, 2f * mapReflectionZ - point.z));
+            var canonical = new List<LocalPoint>(candidate.rawCorners.Count); foreach (var point in candidate.rawCorners) canonical.Add(new LocalPoint(point.x, point.z));
             return !RouteGeometryValidator.CrossesSolidWall(canonical, floor, out _) && !RouteGeometryValidator.EntersNonWalkableRegion(canonical, floor, out _);
         }
 
@@ -341,7 +339,7 @@ namespace ARNav.Runtime.Navigation
             for (var i = 0; i < candidate.rawCorners.Count - 1; i++)
             {
                 var a = candidate.rawCorners[i]; var b = candidate.rawCorners[i + 1];
-                if (!navigationGrid.TryWorldToCell(new LocalPoint(a.x, 2f * mapReflectionZ - a.z), out var ax, out var ay) || !navigationGrid.TryWorldToCell(new LocalPoint(b.x, 2f * mapReflectionZ - b.z), out var bx, out var by) || !navigationGrid.HasLineOfSight(ax, ay, bx, by))
+                if (!navigationGrid.TryWorldToCell(new LocalPoint(a.x, a.z), out var ax, out var ay) || !navigationGrid.TryWorldToCell(new LocalPoint(b.x, b.z), out var bx, out var by) || !navigationGrid.HasLineOfSight(ax, ay, bx, by))
                 { Debug.LogWarning("[ARNav][RouteValidation] NavMesh route segment " + i + " intersects blocked/out-of-grid occupancy cells; falling back to GridAStar."); return false; }
             }
             return true;
@@ -351,7 +349,7 @@ namespace ARNav.Runtime.Navigation
             if (anchor == null) return false;
             if (anchor.sessionId != session.SessionId || anchor.sourceSha256 != (project.sourceImage == null ? null : project.sourceImage.sha256)) { anchor.hasNavMeshPosition = false; anchor.hasGridPosition = false; Debug.LogWarning("[ARNav][TouchRoute] stale waypoint session/hash: " + anchor.roomId); return false; }
             var room = RoomNavigationPointService.FindRoom(floor, anchor.roomId); if (room == null) return false;
-            if (anchor.hasNavMeshPosition && UnityEngine.AI.NavMesh.SamplePosition(anchor.navMeshPosition, out var cached, .08f, UnityEngine.AI.NavMesh.AllAreas) && RegionLocator.Contains(new LocalPoint(cached.position.x, 2f * mapReflectionZ - cached.position.z), room.polygon) && RouteGeometryValidator.IsPointClearOfSolidWalls(new LocalPoint(cached.position.x, 2f * mapReflectionZ - cached.position.z), floor, 0f, out _)) { anchor.navMeshPosition = cached.position; return true; }
+            if (anchor.hasNavMeshPosition && UnityEngine.AI.NavMesh.SamplePosition(anchor.navMeshPosition, out var cached, .08f, UnityEngine.AI.NavMesh.AllAreas) && RegionLocator.Contains(new LocalPoint(cached.position.x, cached.position.z), room.polygon) && RouteGeometryValidator.IsPointClearOfSolidWalls(new LocalPoint(cached.position.x, cached.position.z), floor, 0f, out _)) { anchor.navMeshPosition = cached.position; return true; }
             if (!TrySampleRoomPoint(room, out var sampled, out var reason)) { anchor.hasNavMeshPosition = false; Debug.LogWarning("[ARNav][TouchRoute] no same-room NavMesh point: room=" + room.id + " reason=" + reason); return false; }
             anchor.navMeshPosition = sampled.position; anchor.navMeshSampleDistance = Vector3.Distance(anchor.displayPosition, sampled.position); anchor.hasNavMeshPosition = true; return true;
         }
@@ -429,7 +427,7 @@ namespace ARNav.Runtime.Navigation
             if (cameraView.angle <= 0.0001f)
             {
                 previewCamera.transform.position = target + Vector3.up * distance;
-                previewCamera.transform.rotation = Quaternion.LookRotation(Vector3.down, Vector3.forward);
+                previewCamera.transform.rotation = CameraFramingUtility.SourceAlignedTopRotation();
             }
             else
             {
@@ -459,7 +457,7 @@ namespace ARNav.Runtime.Navigation
         private bool ValidateRoute(NavigationRoute candidate, string label)
         {
             if (candidate == null || !candidate.valid) { SetStatus(label + " is invalid."); return false; }
-            var canonicalCorners = new List<LocalPoint>(candidate.rawCorners.Count); foreach (var point in candidate.rawCorners) canonicalCorners.Add(new LocalPoint(point.x, 2f * mapReflectionZ - point.z));
+            var canonicalCorners = new List<LocalPoint>(candidate.rawCorners.Count); foreach (var point in candidate.rawCorners) canonicalCorners.Add(new LocalPoint(point.x, point.z));
             if (RouteGeometryValidator.CrossesSolidWall(canonicalCorners, floor, out var wallError)) { Debug.LogError("[ARNav][RouteValidation] " + label + " INVALID: " + wallError); SetStatus("Route blocked by wall."); return false; }
             if (RouteGeometryValidator.EntersNonWalkableRegion(canonicalCorners, floor, out var regionError)) { Debug.LogError("[ARNav][RouteValidation] " + label + " INVALID: " + regionError); SetStatus("Route enters non-walkable space."); return false; }
             Debug.Log("[ARNav][RouteValidation] " + label + " valid: corners=" + candidate.rawCorners.Count + " wallIntersections=0"); return true;
@@ -477,12 +475,12 @@ namespace ARNav.Runtime.Navigation
                 if (!RoomNavigationPointService.TryFindWalkableInteriorPoint(room, floor, clearance, out var candidate, out var reason)) { missing.Add(room.id + "=no valid non-wall polygon interior: " + reason); Debug.LogWarning("[ARNav][Navigation] Semantic room omitted because no actual non-wall interior point was found: " + room.id + " " + reason); continue; }
                 var pointInside = RoomNavigationPointService.Contains(room, candidate); var overlapsWall = !RouteGeometryValidator.IsPointClearOfSolidWalls(candidate, floor, 0f, out var wallId);
                 if (!pointInside || overlapsWall) { missing.Add(room.id + "=candidate failed containment/wall assertion"); Debug.LogError("[ARNav][WaypointAssert] Reject " + room.id + " inside=" + pointInside + " wallOverlap=" + overlapsWall + " wall=" + wallId); continue; }
-                var display = new Vector3(candidate.x, floor.elevationMetres, 2f * mapReflectionZ - candidate.z);
+                var display = new Vector3(candidate.x, floor.elevationMetres, candidate.z);
                 var anchor = new GameObject("RoomNavAnchor_" + room.id); anchor.transform.SetParent(roomAnchorsRoot.transform, false); anchor.transform.position = display;
                 var metadata = anchor.AddComponent<GeneratedRoomNavAnchor>(); metadata.waypointId = floor.id + ":" + room.id; metadata.floorId = floor.id; metadata.roomId = room.id; metadata.roomNumber = room.roomNumber; metadata.displayName = room.displayName; metadata.sessionId = session.SessionId; metadata.sourceSha256 = project.sourceImage == null ? null : project.sourceImage.sha256; metadata.displayPosition = display;
                 var gridCellX = -1; var gridCellY = -1;
                 if (navigationGrid != null && navigationGrid.sessionId == session.SessionId && navigationGrid.sourceSha256 == project.sourceImage.sha256 && navigationGrid.TryFindWalkable(candidate, p => RoomNavigationPointService.Contains(room, p), 80, out gridCellX, out gridCellY))
-                { var gridPoint = navigationGrid.CellCenter(gridCellX, gridCellY); metadata.gridPosition = new Vector3(gridPoint.x, floor.elevationMetres, 2f * mapReflectionZ - gridPoint.z); metadata.hasGridPosition = true; metadata.gridComponentId = navigationGrid.GetComponentId(gridCellX, gridCellY); }
+                { var gridPoint = navigationGrid.CellCenter(gridCellX, gridCellY); metadata.gridPosition = new Vector3(gridPoint.x, floor.elevationMetres, gridPoint.z); metadata.hasGridPosition = true; metadata.gridComponentId = navigationGrid.GetComponentId(gridCellX, gridCellY); }
                 if (TrySampleRoomPoint(room, out var hit, out reason)) { metadata.navMeshPosition = hit.position; metadata.hasNavMeshPosition = true; metadata.navMeshSampleDistance = Vector3.Distance(display, hit.position); routable++; }
                 else missing.Add(room.id + "=" + reason);
                 var wallGap = RouteGeometryValidator.DistanceToSolidWallFootprints(candidate, floor); var markerHalfSize = Mathf.Max(0.001f, Mathf.Min(0.12f, wallGap * 0.65f));
@@ -503,7 +501,7 @@ namespace ARNav.Runtime.Navigation
             {
                 var anchor = child.GetComponent<GeneratedRoomNavAnchor>();
                 if (anchor == null || !anchor.hasGridPosition || anchor.sessionId != session.SessionId || anchor.sourceSha256 != project.sourceImage.sha256 || anchor.gridComponentId < 0) continue;
-                var canonical = new LocalPoint(anchor.gridPosition.x, 2f * mapReflectionZ - anchor.gridPosition.z);
+                var canonical = new LocalPoint(anchor.gridPosition.x, anchor.gridPosition.z);
                 if (!navigationGrid.TryWorldToCell(canonical, out var x, out var y) || !navigationGrid.IsWalkable(x, y) || navigationGrid.GetComponentId(x, y) != anchor.gridComponentId) continue;
                 nodes.Add(new WaypointGridNode { roomId = anchor.roomId, cellX = x, cellY = y, componentId = anchor.gridComponentId });
             }
@@ -529,7 +527,7 @@ namespace ARNav.Runtime.Navigation
                 lineObject.transform.SetParent(networkRoot.transform, false);
                 var line = lineObject.AddComponent<LineRenderer>(); line.useWorldSpace = true; line.enabled = true; line.positionCount = edge.path.Count;
                 line.startWidth = 0.055f; line.endWidth = 0.055f; line.numCapVertices = 2; line.numCornerVertices = 2; line.sharedMaterial = networkMaterial; line.startColor = networkMaterial.color; line.endColor = networkMaterial.color;
-                for (var i = 0; i < edge.path.Count; i++) line.SetPosition(i, new Vector3(edge.path[i].x, floor.elevationMetres + waypointHeightOffsetMetres, 2f * mapReflectionZ - edge.path[i].z));
+                for (var i = 0; i < edge.path.Count; i++) line.SetPosition(i, new Vector3(edge.path[i].x, floor.elevationMetres + waypointHeightOffsetMetres, edge.path[i].z));
                 drawn++;
                 Debug.Log("[ARNav][WaypointNetworkEdge] " + edge.fromRoomId + "->" + edge.toRoomId + " component=" + edge.componentId + " backend=GridAStar rawCells=" + edge.rawCellCount + " points=" + edge.path.Count + " wallIntersections=0 enabled=" + line.enabled);
             }
@@ -590,9 +588,9 @@ namespace ARNav.Runtime.Navigation
             reason = "no interior candidate"; var candidates = RoomNavigationPointService.GetInteriorCandidates(room); var bestScore = float.MinValue; var found = false; var best = default(UnityEngine.AI.NavMeshHit); var sampledAny = false; var insideAny = false; var wallRejected = false;
             if (room == null || room.polygon == null || room.polygon.vertices == null || room.polygon.vertices.Count < 3 || !PolygonTriangulator.TryTriangulate(room.polygon.vertices, out _, out _)) { hit = default(UnityEngine.AI.NavMeshHit); reason = "malformed room polygon"; return false; }
             var radii = new[] { .12f, .25f, .4f, .6f };
-            foreach (var point in candidates) if (RegionLocator.Contains(point, room.polygon)) foreach (var radius in radii) if (UnityEngine.AI.NavMesh.SamplePosition(new Vector3(point.x, floor.elevationMetres, 2f * mapReflectionZ - point.z), out var sampled, radius, UnityEngine.AI.NavMesh.AllAreas))
+            foreach (var point in candidates) if (RegionLocator.Contains(point, room.polygon)) foreach (var radius in radii) if (UnityEngine.AI.NavMesh.SamplePosition(new Vector3(point.x, floor.elevationMetres, point.z), out var sampled, radius, UnityEngine.AI.NavMesh.AllAreas))
             {
-                sampledAny = true; var canonical = new LocalPoint(sampled.position.x, 2f * mapReflectionZ - sampled.position.z); if (!RegionLocator.Contains(canonical, room.polygon)) continue; insideAny = true;
+                sampledAny = true; var canonical = new LocalPoint(sampled.position.x, sampled.position.z); if (!RegionLocator.Contains(canonical, room.polygon)) continue; insideAny = true;
                 var clearance = RoomNavigationPointService.DistanceToBoundary(canonical, room);
                 var wallClearance = navMeshBuilder == null ? .3f : navMeshBuilder.Settings.agentRadiusMetres;
                 if (clearance < wallClearance || !RouteGeometryValidator.IsPointClearOfSolidWalls(canonical, floor, wallClearance, out _)) { wallRejected = true; continue; }
