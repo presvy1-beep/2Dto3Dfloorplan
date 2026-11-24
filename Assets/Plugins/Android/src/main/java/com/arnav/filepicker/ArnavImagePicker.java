@@ -3,8 +3,6 @@ package com.arnav.filepicker;
 import android.app.Activity;
 import android.content.ContentResolver;
 import android.content.Intent;
-import android.content.ClipData;
-import android.content.ClipboardManager;
 import android.database.Cursor;
 import android.net.Uri;
 import android.provider.OpenableColumns;
@@ -18,6 +16,7 @@ import java.io.InputStream;
 public final class ArnavImagePicker {
     public static final int REQUEST_CODE = 47101;
     public static final int EXPORT_REQUEST_CODE = 47102;
+    public static final int JSON_OPEN_REQUEST_CODE = 47103;
     // Keep native SAF staging aligned with ImageImportLimits.Default (32 MiB).
     private static final long MAX_IMAGE_BYTES = 32L * 1024L * 1024L;
     private static final String PREFS = "ARNavImagePicker";
@@ -27,6 +26,8 @@ public final class ArnavImagePicker {
     private static String exportObjectName;
     private static String exportMethodName;
     private static String exportSourcePath;
+    private static String jsonObjectName;
+    private static String jsonMethodName;
 
     private ArnavImagePicker() {}
 
@@ -51,25 +52,31 @@ public final class ArnavImagePicker {
         activity.startActivityForResult(intent, REQUEST_CODE);
     }
 
-    public static String copyTextAndReadBack(String text) {
-        Activity activity = UnityPlayer.currentActivity;
-        ClipboardManager clipboard = (ClipboardManager) activity.getSystemService(Activity.CLIPBOARD_SERVICE);
-        if (clipboard == null) return "";
-        clipboard.setPrimaryClip(ClipData.newPlainText("ARNav JSON", text == null ? "" : text));
-        ClipData clip = clipboard.getPrimaryClip();
-        if (clip == null || clip.getItemCount() == 0) return "";
-        CharSequence value = clip.getItemAt(0).coerceToText(activity);
-        return value == null ? "" : value.toString();
+    public static void openGlbSavePicker(String objectName, String methodName, String sourcePath, String suggestedName) {
+        openDocumentSavePicker(objectName, methodName, sourcePath, suggestedName, "model/gltf-binary");
     }
 
-    public static void openGlbSavePicker(String objectName, String methodName, String sourcePath, String suggestedName) {
+    public static void openJsonSavePicker(String objectName, String methodName, String sourcePath, String suggestedName) {
+        openDocumentSavePicker(objectName, methodName, sourcePath, suggestedName, "application/json");
+    }
+
+    public static void openJsonPicker(String objectName, String methodName) {
+        Activity activity = UnityPlayer.currentActivity;
+        jsonObjectName = objectName; jsonMethodName = methodName;
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/json");
+        activity.startActivityForResult(intent, JSON_OPEN_REQUEST_CODE);
+    }
+
+    private static void openDocumentSavePicker(String objectName, String methodName, String sourcePath, String suggestedName, String mimeType) {
         Activity activity = UnityPlayer.currentActivity;
         exportObjectName = objectName;
         exportMethodName = methodName;
         exportSourcePath = sourcePath;
         Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("model/gltf-binary");
+        intent.setType(mimeType);
         intent.putExtra(Intent.EXTRA_TITLE, suggestedName);
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
         try { activity.startActivityForResult(intent, EXPORT_REQUEST_CODE); }
@@ -84,6 +91,12 @@ public final class ArnavImagePicker {
     }
 
     public static void handleActivityResult(final Activity activity, int requestCode, int resultCode, Intent data) {
+        if (requestCode == JSON_OPEN_REQUEST_CODE) {
+            if (resultCode != Activity.RESULT_OK || data == null || data.getData() == null) { sendJsonOpen(activity, "{\"status\":\"cancelled\"}"); return; }
+            final Uri uri = data.getData();
+            new Thread(new Runnable() { @Override public void run() { copyJsonToCache(activity, uri); } }, "ARNavJsonImport").start();
+            return;
+        }
         if (requestCode == EXPORT_REQUEST_CODE) {
             if (resultCode != Activity.RESULT_OK || data == null || data.getData() == null) {
                 sendExport(activity, "{\"status\":\"cancelled\"}");
@@ -108,13 +121,15 @@ public final class ArnavImagePicker {
     private static void writeExport(Activity activity, Uri uri) {
         long bytesCopied = 0;
         try {
-            if (exportSourcePath == null) throw new IllegalStateException("GLB staging file is unavailable.");
+            if (exportSourcePath == null) throw new IllegalStateException("Export staging file is unavailable.");
+            long expectedBytes = new File(exportSourcePath).length();
             InputStream input = new java.io.FileInputStream(exportSourcePath);
             java.io.OutputStream output = activity.getContentResolver().openOutputStream(uri, "w");
             if (output == null) { input.close(); throw new IllegalStateException("Could not open destination document."); }
             byte[] buffer = new byte[32768]; int read;
             try { while ((read = input.read(buffer)) != -1) { output.write(buffer, 0, read); bytesCopied += read; } output.flush(); }
             finally { try { input.close(); } finally { output.close(); } }
+            if (bytesCopied != expectedBytes) throw new IOException("Export byte count mismatch: wrote " + bytesCopied + " of " + expectedBytes + ".");
             sendExport(activity, "{\"status\":\"success\",\"uri\":" + quote(uri.toString()) + ",\"bytes\":" + bytesCopied + "}");
         } catch (Exception exception) {
             android.util.Log.e("ARNavImagePicker", "Could not write GLB document", exception);
@@ -125,6 +140,33 @@ public final class ArnavImagePicker {
     private static void sendExport(final Activity activity, final String json) {
         final String objectName = exportObjectName; final String methodName = exportMethodName;
         exportObjectName = null; exportMethodName = null; exportSourcePath = null;
+        activity.runOnUiThread(new Runnable() {
+            @Override public void run() { if (objectName != null && methodName != null) UnityPlayer.UnitySendMessage(objectName, methodName, json); }
+        });
+    }
+
+    private static void copyJsonToCache(Activity activity, Uri uri) {
+        File output = new File(activity.getCacheDir(), "arnav-json-" + java.util.UUID.randomUUID() + ".json");
+        try (InputStream input = activity.getContentResolver().openInputStream(uri);
+             FileOutputStream stream = new FileOutputStream(output)) {
+            if (input == null) throw new IOException("Selected JSON could not be opened.");
+            byte[] buffer = new byte[8192]; int read; long total = 0;
+            while ((read = input.read(buffer)) != -1) {
+                total += read;
+                if (total > 16L * 1024L * 1024L) throw new IOException("JSON exceeds the 16 MiB import limit.");
+                stream.write(buffer, 0, read);
+            }
+            stream.flush();
+            sendJsonOpen(activity, "{\"status\":\"success\",\"path\":" + quote(output.getAbsolutePath()) + "}");
+        } catch (Exception exception) {
+            output.delete();
+            sendJsonOpen(activity, errorJson(exception.getMessage()));
+        }
+    }
+
+    private static void sendJsonOpen(final Activity activity, final String json) {
+        final String objectName = jsonObjectName; final String methodName = jsonMethodName;
+        jsonObjectName = null; jsonMethodName = null;
         activity.runOnUiThread(new Runnable() {
             @Override public void run() { if (objectName != null && methodName != null) UnityPlayer.UnitySendMessage(objectName, methodName, json); }
         });

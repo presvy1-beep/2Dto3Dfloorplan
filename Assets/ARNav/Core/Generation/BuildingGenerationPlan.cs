@@ -18,13 +18,23 @@ namespace ARNav.Core.Generation
             foreach (var floor in project.floors)
             {
                 var fp = new FloorGenerationPlan { source = floor }; if (floor == null) { plan.errors.Add("Null floor."); continue; }
-                if (floor.elevationMetres != floor.elevationMetres || float.IsInfinity(floor.elevationMetres)) fp.errors.Add("Floor elevation is invalid.");
+                if (float.IsNaN(floor.elevationMetres) || float.IsInfinity(floor.elevationMetres)) fp.errors.Add("Floor elevation is invalid.");
                 if (floor.rooms != null) foreach (var room in floor.rooms)
                 {
                     // Non-walkable regions describe void/background/unknown space. They
                     // remain in JSON for editing and validation, but must never become a
                     // generated floor that fills architectural holes.
                     if (room == null || !room.walkable) continue;
+                    if (room.holes != null && room.holes.Count > 0)
+                    {
+                        if (room.rasterRuns != null && room.rasterRuns.Count > 0)
+                        {
+                            fp.rooms.Add(new RoomGenerationPlan { source = room, rasterFallback = true });
+                            plan.warnings.Add("Floor " + floor.id + ": Room " + room.id + " has holes; using occupied raster cells to preserve them.");
+                        }
+                        else plan.warnings.Add("Floor " + floor.id + ": Room " + room.id + " has holes but no raster cells; floor patch skipped to avoid filling voids.");
+                        continue;
+                    }
                     if (room.preferRasterGeometry && room.rasterRuns != null && room.rasterRuns.Count > 0)
                     {
                         var rasterDiagnostic = room.polygon == null ? null : PolygonTriangulator.Triangulate(room.polygon.vertices);
@@ -53,7 +63,8 @@ namespace ARNav.Core.Generation
                 }
                 fp.usesWallPaths = floor.architecturalWallPaths != null && floor.architecturalWallPaths.Count > 0;
                 fp.usesRasterWallMask = !fp.usesWallPaths && floor.architecturalWallRuns != null && floor.architecturalWallRuns.Count > 0;
-                if (fp.usesRasterWallMask) plan.warnings.Add("Floor " + floor.id + ": serialized wallPaths are missing; using raw wallRuns fallback.");
+                // OpenCV projects intentionally store the clean raster wall mask
+                // as the canonical wall geometry; older projects may use paths.
                 if (!fp.usesWallPaths && !fp.usesRasterWallMask && floor.walls != null) foreach (var wall in floor.walls) { if (WallOpeningPlanner.TryPlan(wall, floor.doors, defaults, out var wp, out var error)) fp.walls.Add(wp); else fp.errors.Add(error); }
                 plan.floors.Add(fp); foreach (var error in fp.errors) plan.errors.Add("Floor " + floor.id + ": " + error);
             }

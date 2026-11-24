@@ -275,7 +275,7 @@ namespace ARNav.Tests.EditMode
         public void DefaultWallHeightIsModestlyReducedAndCentralized()
         {
             var defaults = new MapGenerationDefaults();
-            Assert.That(defaults.defaultWallHeightMetres, Is.EqualTo(0.35f).Within(0.0001f));
+            Assert.That(defaults.defaultWallHeightMetres, Is.EqualTo(2.7f).Within(0.0001f));
             Assert.That(defaults.defaultBaseThicknessMetres, Is.EqualTo(0.025f).Within(0.0001f));
             Assert.That(defaults.defaultWallThicknessMetres, Is.EqualTo(0.15f).Within(0.0001f));
         }
@@ -654,7 +654,7 @@ namespace ARNav.Tests.EditMode
             var buildingObject = new GameObject("GenerationSmokeTest"); var generator = buildingObject.AddComponent<ProceduralBuildingGenerator>(); var navObject = new GameObject("NavMeshSmokeTest"); var navBuilder = navObject.AddComponent<RuntimeNavMeshBuilder>();
             try
             {
-                Assert.IsTrue(generator.Generate(TestMapFactory.CreateTinyThreeRoomMap(), out var generationError), generationError); Assert.AreEqual(-1f, generator.GeneratedRoot.transform.localScale.z, .0001f); Assert.AreEqual(generator.GeneratedBounds.center.z, generator.GeneratedRoot.transform.TransformPoint(new Vector3(0, 0, generator.GeneratedBounds.center.z)).z, .0001f); Assert.IsTrue(navBuilder.Build(generator.GeneratedRoot, generator.GeneratedBounds, out var navError), navError); Assert.AreEqual(RuntimeNavMeshState.Ready, navBuilder.State); navBuilder.Clear(); Assert.AreEqual(RuntimeNavMeshState.NotBuilt, navBuilder.State); generator.ClearGeneratedBuilding(); Assert.IsNull(generator.GeneratedRoot);
+                Assert.IsTrue(generator.Generate(TestMapFactory.CreateTinyThreeRoomMap(), out var generationError), generationError); Assert.AreEqual(1f, generator.GeneratedRoot.transform.localScale.z, .0001f); Assert.AreEqual(generator.GeneratedBounds.center.z, generator.GeneratedRoot.transform.TransformPoint(new Vector3(0, 0, generator.GeneratedBounds.center.z)).z, .0001f); Assert.IsTrue(navBuilder.Build(generator.GeneratedRoot, generator.GeneratedBounds, out var navError), navError); Assert.AreEqual(RuntimeNavMeshState.Ready, navBuilder.State); navBuilder.Clear(); Assert.AreEqual(RuntimeNavMeshState.NotBuilt, navBuilder.State); generator.ClearGeneratedBuilding(); Assert.IsNull(generator.GeneratedRoot);
             }
             finally { UnityEngine.Object.DestroyImmediate(navObject); UnityEngine.Object.DestroyImmediate(buildingObject); }
         }

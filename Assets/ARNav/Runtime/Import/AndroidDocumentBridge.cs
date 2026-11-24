@@ -15,59 +15,91 @@ namespace ARNav.Runtime.Import
         public string error;
     }
 
-    /// <summary>Android clipboard and Storage Access Framework bridge for current-session data.</summary>
+    [Serializable]
+    internal sealed class DocumentOpenResponse
+    {
+        public string status;
+        public string path;
+        public string error;
+    }
+
+    /// <summary>Android Storage Access Framework bridge for project files.</summary>
     public sealed class AndroidDocumentBridge : MonoBehaviour
     {
         private Action<bool, string, long> saveCompleted;
+        private Action<bool, string, string> openCompleted;
         private string stagingPath;
 
-        public static bool TryCopyTextAndVerify(string text, out string readBack, out string error)
+        public bool BeginGlbSave(byte[] glb, string suggestedName, Action<bool, string, long> completed, out string error)
+        { return BeginSave(glb, suggestedName, "glb", false, completed, out error); }
+
+        public bool BeginJsonSave(string json, string suggestedName, Action<bool, string, long> completed, out string error)
         {
-            readBack = null; error = null;
-#if UNITY_ANDROID && !UNITY_EDITOR
-            try
-            {
-                using (var picker = new AndroidJavaClass("com.arnav.filepicker.ArnavImagePicker"))
-                    readBack = picker.CallStatic<string>("copyTextAndReadBack", text ?? string.Empty);
-                return string.Equals(text ?? string.Empty, readBack ?? string.Empty, StringComparison.Ordinal);
-            }
-            catch (Exception exception)
-            {
-                // Android clipboard writes are Binder transactions. Large maps can
-                // exceed the system parcel limit; treat that as a recoverable copy
-                // failure and keep the rest of the current session unaffected.
-                var message = exception.Message ?? string.Empty;
-                error = message.IndexOf("TransactionTooLarge", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        exception.GetType().Name.IndexOf("TransactionTooLarge", StringComparison.OrdinalIgnoreCase) >= 0
-                    ? "JSON is too large for the Android clipboard. The map remains available for 3D build and export."
-                    : message;
-                return false;
-            }
-#else
-            GUIUtility.systemCopyBuffer = text ?? string.Empty;
-            readBack = GUIUtility.systemCopyBuffer;
-            return string.Equals(text ?? string.Empty, readBack ?? string.Empty, StringComparison.Ordinal);
-#endif
+            if (string.IsNullOrWhiteSpace(json)) { error = "JSON data is empty."; return false; }
+            return BeginSave(new UTF8Encoding(false).GetBytes(json), suggestedName, "json", true, completed, out error);
         }
 
-        public bool BeginGlbSave(byte[] glb, string suggestedName, Action<bool, string, long> completed, out string error)
+        public bool BeginJsonOpen(Action<bool, string, string> completed, out string error)
         {
             error = null;
-            if (glb == null || glb.Length < 20) { error = "GLB data is empty or incomplete."; return false; }
-            if (saveCompleted != null) { error = "A model export is already in progress."; return false; }
+            if (openCompleted != null) { error = "A JSON import is already in progress."; return false; }
+            openCompleted = completed;
             try
             {
-                stagingPath = Path.Combine(Application.temporaryCachePath, "arnav-export-" + Guid.NewGuid().ToString("N") + ".glb");
-                File.WriteAllBytes(stagingPath, glb);
+#if UNITY_ANDROID && !UNITY_EDITOR
+                using (var picker = new AndroidJavaClass("com.arnav.filepicker.ArnavImagePicker"))
+                    picker.CallStatic("openJsonPicker", gameObject.name, "OnJsonOpenResult");
+#elif UNITY_EDITOR
+                var path = UnityEditor.EditorUtility.OpenFilePanel("Import map JSON", string.Empty, "json");
+                if (string.IsNullOrEmpty(path)) CompleteOpen(false, null, "JSON import cancelled.");
+                else CompleteOpen(true, File.ReadAllText(path), null);
+#else
+                CompleteOpen(false, null, "JSON import is available in Android and the Unity Editor.");
+#endif
+                return true;
+            }
+            catch (Exception exception) { CompleteOpen(false, null, exception.Message); error = exception.Message; return false; }
+        }
+
+        public void OnJsonOpenResult(string responseJson)
+        {
+            DocumentOpenResponse response;
+            try { response = JsonUtility.FromJson<DocumentOpenResponse>(responseJson); }
+            catch (Exception exception) { CompleteOpen(false, null, exception.Message); return; }
+            if (response == null || response.status != "success")
+            { CompleteOpen(false, null, response == null ? "Invalid JSON picker response." : response.status == "cancelled" ? "JSON import cancelled." : response.error); return; }
+            try
+            {
+                if (string.IsNullOrWhiteSpace(response.path) || !File.Exists(response.path)) throw new FileNotFoundException("Selected JSON was not copied into the app.");
+                var info = new FileInfo(response.path);
+                if (info.Length > 16 * 1024 * 1024) throw new InvalidDataException("JSON file exceeds the 16 MiB import limit.");
+                CompleteOpen(true, File.ReadAllText(response.path), null);
+            }
+            catch (Exception exception) { CompleteOpen(false, null, exception.Message); }
+            finally { if (!string.IsNullOrEmpty(response.path)) try { File.Delete(response.path); } catch (IOException) { } }
+        }
+
+        private void CompleteOpen(bool success, string contents, string error)
+        { var callback = openCompleted; openCompleted = null; callback?.Invoke(success, contents, error); }
+
+        private bool BeginSave(byte[] contents, string suggestedName, string extension, bool json, Action<bool, string, long> completed, out string error)
+        {
+            error = null;
+            if (contents == null || contents.Length < (json ? 2 : 20)) { error = "Export data is empty or incomplete."; return false; }
+            if (saveCompleted != null) { error = "A document export is already in progress."; return false; }
+            try
+            {
+                stagingPath = Path.Combine(Application.temporaryCachePath, "arnav-export-" + Guid.NewGuid().ToString("N") + "." + extension);
+                File.WriteAllBytes(stagingPath, contents);
                 saveCompleted = completed;
 #if UNITY_ANDROID && !UNITY_EDITOR
                 using (var picker = new AndroidJavaClass("com.arnav.filepicker.ArnavImagePicker"))
-                    picker.CallStatic("openGlbSavePicker", gameObject.name, "OnGlbSaveResult", stagingPath, suggestedName);
+                    picker.CallStatic(json ? "openJsonSavePicker" : "openGlbSavePicker", gameObject.name, "OnGlbSaveResult", stagingPath, suggestedName);
                 return true;
 #elif UNITY_EDITOR
-                var path = UnityEditor.EditorUtility.SaveFilePanel("Export 3D model", string.Empty, Path.GetFileNameWithoutExtension(suggestedName), "glb");
+                var path = UnityEditor.EditorUtility.SaveFilePanel(json ? "Export map JSON" : "Export 3D model", string.Empty, Path.GetFileNameWithoutExtension(suggestedName), extension);
                 if (string.IsNullOrEmpty(path)) { Complete(false, "Export cancelled.", 0); return true; }
-                File.WriteAllBytes(path, glb); Complete(true, path, glb.Length); return true;
+                File.WriteAllBytes(path, contents); Complete(true, path, new FileInfo(path).Length); return true;
 #else
                 Complete(false, "The document save picker is configured for Android and Editor only.", 0); return false;
 #endif
@@ -99,6 +131,6 @@ namespace ARNav.Runtime.Import
         public static string Sha256(byte[] bytes)
         { using (var sha = SHA256.Create()) { var hash = sha.ComputeHash(bytes); var builder = new StringBuilder(hash.Length * 2); foreach (var value in hash) builder.Append(value.ToString("x2")); return builder.ToString(); } }
 
-        private void OnDestroy() { if (saveCompleted != null) Complete(false, "Export was interrupted.", 0); }
+        private void OnDestroy() { if (saveCompleted != null) Complete(false, "Export was interrupted.", 0); if (openCompleted != null) CompleteOpen(false, null, "Import was interrupted."); }
     }
 }

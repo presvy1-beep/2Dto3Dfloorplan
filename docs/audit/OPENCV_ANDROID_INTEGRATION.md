@@ -1,0 +1,9 @@
+# Offline OpenCV integration (in progress)
+
+The Android floorplan analyzer calls `OpenCvFloorplanProcessor.process` on a worker thread. It uses the official `org.opencv:opencv:4.14.0` Android AAR from Maven Central. The checked-in `Assets/Plugins/Android/opencv-4.14.0-arm64.aar` is a repack of that AAR containing its Java classes, manifest, metadata, and `libopencv_java4.so` for **ARM64** only. Its `libc++_shared.so` copy is omitted because Unity already packages that library; including both makes Gradle's `mergeReleaseNativeLibs` fail. The original AAR SHA-256 is `6d11b40f6a54113dafe8540b1237b637193cb21e83deb11bc53d6757d35d494d`. It has no network dependency at runtime. OpenCV 4.14.0 is Apache License 2.0; the license is included at `Assets/Plugins/Android/OpenCV-LICENSE.txt`.
+
+The Java processor applies Gaussian blur, Otsu guided black thresholding, morphology, connected components, contour size checks, a distance transform for thickness, and exterior flood fill with an estimated footprint fill for open plans. It returns wall and floor masks in original image coordinates. The masks become the source annotations and are converted to saved local geometry by the existing converter. 3D generation and JSON load use that saved geometry.
+
+The current classifier assumes structural wall ink is black. It can reject pale walls, including the balcony outlines in the supplied landscape JPEG. It does not reliably distinguish all furniture from short walls; real device visual validation is still required before deleting the legacy extractor. The Editor currently lacks a native OpenCV binary, so image extraction is available only in Android builds. Existing JSON import and 3D generation remain available in the Editor.
+
+Estimated scale defaults to 0.02 metres per image pixel. These dimensions are approximate, not measurements.

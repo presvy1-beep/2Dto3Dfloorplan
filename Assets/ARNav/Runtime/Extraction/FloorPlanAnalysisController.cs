@@ -24,7 +24,7 @@ namespace ARNav.Runtime.Extraction
         }
         private static readonly SemaphoreSlim ExtractionGate = new SemaphoreSlim(1, 1);
         private readonly List<Job> retiredJobs = new List<Job>();
-        private IFloorPlanExtractor extractor = new SimpleFloorPlanExtractor();
+        private IFloorPlanExtractor extractor = new DirectBlackMaskExtractor();
         private Job active;
         private long revision;
         private bool destroyed;

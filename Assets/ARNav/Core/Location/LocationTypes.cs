@@ -19,7 +19,7 @@ namespace ARNav.Core.Location
         public double timestampUnixSeconds;
         public double receivedUnixSeconds;
         public bool isValid;
-        public bool IsFiniteAndValid() { return isValid && Finite(latitude) && Finite(longitude) && Finite(altitudeMetres) && Finite(horizontalAccuracyMetres) && Finite(verticalAccuracyMetres) && horizontalAccuracyMetres >= 0 && verticalAccuracyMetres >= 0; }
+        public bool IsFiniteAndValid() { return isValid && Finite(latitude) && latitude >= -90 && latitude <= 90 && Finite(longitude) && longitude >= -180 && longitude <= 180 && Finite(horizontalAccuracyMetres) && horizontalAccuracyMetres >= 0; }
         private static bool Finite(double value) { return !double.IsNaN(value) && !double.IsInfinity(value); }
     }
 

@@ -29,12 +29,15 @@ namespace ARNav.Runtime.Generation
             error = null;
             if (generatedRoot == null) { error = "Generated model is unavailable."; return false; }
 
+            try
+            {
+
             var renderers = generatedRoot.GetComponentsInChildren<MeshRenderer>(true);
             var meshes = new List<MeshPayload>();
             var binary = new List<byte>(1024 * 1024);
             foreach (var renderer in renderers)
             {
-                if (renderer == null || !renderer.enabled || IsExcluded(renderer.transform, generatedRoot.transform)) continue;
+                if (renderer == null || !renderer.enabled || !renderer.gameObject.activeInHierarchy || IsExcluded(renderer.transform, generatedRoot.transform)) continue;
                 var filter = renderer.GetComponent<MeshFilter>();
                 var mesh = filter == null ? null : filter.sharedMesh;
                 if (mesh == null || mesh.vertexCount < 3) continue;
@@ -50,14 +53,18 @@ namespace ARNav.Runtime.Generation
                 {
                     var world = renderer.transform.TransformPoint(vertices[i]);
                     var p = new Vector3(world.x, world.y, -world.z);
+                    if (!Finite(p)) { error = "Generated mesh has non-finite vertex positions."; return false; }
                     positions[i] = p;
                     min = Vector3.Min(min, p); max = Vector3.Max(max, p);
                     var n = sourceNormals != null && sourceNormals.Length == vertices.Length ? normalMatrix.MultiplyVector(sourceNormals[i]).normalized : Vector3.up;
+                    if (!Finite(n) || n.sqrMagnitude < 0.000001f) n = Vector3.up;
                     normals[i] = new Vector3(n.x, n.y, -n.z);
                 }
 
                 var sourceIndices = mesh.triangles;
                 if (sourceIndices.Length < 3 || sourceIndices.Length % 3 != 0) continue;
+                foreach (var index in sourceIndices)
+                    if (index < 0 || index >= vertices.Length) { error = "Generated mesh has an out-of-range triangle index."; return false; }
                 Align4(binary);
                 var positionOffset = binary.Count;
                 foreach (var p in positions) { WriteFloat(binary, p.x); WriteFloat(binary, p.y); WriteFloat(binary, p.z); }
@@ -126,7 +133,12 @@ namespace ARNav.Runtime.Generation
                 foreach (var mesh in meshes) { result.vertexCount += mesh.vertexCount; result.triangleCount += mesh.triangleCount; }
             }
             return true;
+            }
+            catch (Exception exception) { result = null; error = "Could not serialize generated mesh: " + exception.Message; return false; }
         }
+
+        private static bool Finite(Vector3 value)
+        { return !float.IsNaN(value.x) && !float.IsInfinity(value.x) && !float.IsNaN(value.y) && !float.IsInfinity(value.y) && !float.IsNaN(value.z) && !float.IsInfinity(value.z); }
 
         private static string BuildJson(List<MeshPayload> meshes, int binaryLength)
         {
