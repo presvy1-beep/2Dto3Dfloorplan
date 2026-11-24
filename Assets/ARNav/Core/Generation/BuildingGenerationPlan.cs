@@ -63,8 +63,8 @@ namespace ARNav.Core.Generation
                 }
                 fp.usesWallPaths = floor.architecturalWallPaths != null && floor.architecturalWallPaths.Count > 0;
                 fp.usesRasterWallMask = !fp.usesWallPaths && floor.architecturalWallRuns != null && floor.architecturalWallRuns.Count > 0;
-                // OpenCV projects intentionally store the clean raster wall mask
-                // as the canonical wall geometry; older projects may use paths.
+                // Raster projects store wall runs as canonical geometry;
+                // older projects may use paths.
                 if (!fp.usesWallPaths && !fp.usesRasterWallMask && floor.walls != null) foreach (var wall in floor.walls) { if (WallOpeningPlanner.TryPlan(wall, floor.doors, defaults, out var wp, out var error)) fp.walls.Add(wp); else fp.errors.Add(error); }
                 plan.floors.Add(fp); foreach (var error in fp.errors) plan.errors.Add("Floor " + floor.id + ": " + error);
             }
