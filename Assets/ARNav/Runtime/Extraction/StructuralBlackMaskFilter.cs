@@ -9,7 +9,7 @@ namespace ARNav.Runtime.Extraction
         private sealed class Component
         {
             public int area, minX, minY, maxX, maxY, longestHorizontal, longestVertical, longestDiagonal;
-            public bool keep;
+            public bool keep, oblique;
             public int LongSide { get { return Math.Max(maxX - minX + 1, maxY - minY + 1); } }
             public int ShortSide { get { return Math.Min(maxX - minX + 1, maxY - minY + 1); } }
         }
@@ -106,7 +106,10 @@ namespace ARNav.Runtime.Extraction
                 var longBand = Math.Max(Math.Max(part.longestHorizontal, part.longestVertical), part.longestDiagonal) >= Math.Max(12, minimum / 5);
                 var intersectingBands = part.longestHorizontal >= Math.Max(8, minimum / 14) &&
                     part.longestVertical >= Math.Max(8, minimum / 14);
-                if (part.area >= Math.Max(24, minimum / 10) && (longBand || intersectingBands)) part.keep = true;
+                var obliqueBand = part.LongSide >= Math.Max(20, minimum / 4) &&
+                    part.LongSide >= part.ShortSide * 3 / 2;
+                part.oblique = obliqueBand;
+                if (part.area >= Math.Max(24, minimum / 10) && (longBand || intersectingBands || obliqueBand)) part.keep = true;
             }
             var proximity = Math.Max(2, minimum / 160);
             for (var i = 1; i < components.Count; i++)
@@ -129,6 +132,13 @@ namespace ARNav.Runtime.Extraction
             for (var x = 0; x < width; x++) { MarkLine(joined, straight, width, height, x, 0, 1, 1, minimumLine, typicalWidth); MarkLine(joined, straight, width, height, x, height - 1, 1, -1, minimumLine, typicalWidth); }
             for (var y = 1; y < height; y++) MarkLine(joined, straight, width, height, 0, y, 1, 1, minimumLine, typicalWidth);
             for (var y = 0; y < height - 1; y++) MarkLine(joined, straight, width, height, 0, y, 1, -1, minimumLine, typicalWidth);
+            // Raster walls at common non-45-degree angles otherwise lose their
+            // middle sections because only cardinal/diagonal support is present.
+            var obliqueMask = new byte[joined.Length];
+            for (var p = 0; p < joined.Length; p++)
+                if (labels[p] != 0 && components[labels[p]].oblique) obliqueMask[p] = joined[p];
+            MarkSlopedLines(obliqueMask, straight, width, height, 2, 1, minimumLine / 2, typicalWidth);
+            MarkSlopedLines(obliqueMask, straight, width, height, 1, 2, minimumLine / 2, typicalWidth);
             var supportRadius = Math.Max(2, Math.Min(6, typicalWidth));
             Array.Clear(prefix, 0, prefix.Length);
             var stride = width + 1;
@@ -249,6 +259,23 @@ namespace ARNav.Runtime.Extraction
                     }
                 if (thickness > Math.Max(12, typicalWidth * 3)) continue;
                 for (var n = 0; n < length; n++) support[(firstY + n * dy) * width + firstX + n * dx] = 1;
+            }
+        }
+
+        private static void MarkSlopedLines(byte[] mask, byte[] support, int width, int height, int dx, int dy, int minimum, int typicalWidth)
+        {
+            for (var x = 0; x < width; x++)
+            {
+                MarkLine(mask, support, width, height, x, 0, dx, dy, minimum, typicalWidth);
+                MarkLine(mask, support, width, height, x, height - 1, dx, -dy, minimum, typicalWidth);
+            }
+            for (var y = 1; y < height; y++)
+            {
+                for (var x = 0; x < dx; x++)
+                {
+                    MarkLine(mask, support, width, height, x, y, dx, dy, minimum, typicalWidth);
+                    MarkLine(mask, support, width, height, x, y, dx, -dy, minimum, typicalWidth);
+                }
             }
         }
     }

@@ -70,7 +70,7 @@ namespace ARNav.Editor
                 foreach (var renderer in renderers) if (IsWall(renderer)) { walls++; triangles += renderer.GetComponent<MeshFilter>().sharedMesh.triangles.Length / 3; }
                 Debug.Log("[DirectMaskDiagnostic] " + name + " estimatedWidthPixels=" + result.diagnostics.estimatedWallThicknessPixels +
                           " wallPixels=" + result.annotations.architecturalWallPixelCount +
-                          " wallRuns=" + result.annotations.wallRuns.Count + " floorRuns=" + result.annotations.rooms[0].rasterRuns.Count +
+                          " wallRuns=" + result.annotations.wallRuns.Count + " regions=" + result.annotations.rooms.Count +
                           " wallMeshes=" + walls + " wallTriangles=" + triangles + " bounds=" + generator.GeneratedBounds);
             }
             finally { UnityEngine.Object.DestroyImmediate(owner); UnityEngine.Object.DestroyImmediate(image); }
@@ -79,26 +79,42 @@ namespace ARNav.Editor
         private static void WriteMask(Texture2D source, FloorPlanExtractionResult result, string prefix)
         {
             var width = source.width; var height = source.height;
-            var raw = result.diagnostics.binaryBlackMask; var structural = result.diagnostics.architecturalWallMask;
-            var original = source.GetPixels32(); var overlay = new Color32[original.Length]; var mask = new Color32[original.Length];
-            var candidate = new Color32[original.Length];
+            var d = result.diagnostics; var original = source.GetPixels32();
+            WriteLayer(prefix + "-candidate-mask.png", width, height, d.binaryBlackMask, new Color32(20, 20, 20, 255));
+            WriteLayer(prefix + "-structural-mask.png", width, height, d.architecturalWallMask, new Color32(20, 20, 20, 255));
+            WriteLayer(prefix + "-rejected-mask.png", width, height, d.rejectedObjectMask, new Color32(230, 55, 55, 255));
+            WriteLayer(prefix + "-exterior-void-mask.png", width, height, Combine(d.exteriorMask, d.voidMask), new Color32(85, 95, 105, 255));
+            WriteLayer(prefix + "-floor-mask.png", width, height, d.floorMask, new Color32(60, 175, 90, 255));
+            var regions = new Color32[original.Length]; var overlay = new Color32[original.Length];
+            var palette = new[] { new Color32(60, 175, 90, 255), new Color32(45, 135, 215, 255),
+                new Color32(245, 180, 45, 255), new Color32(170, 95, 205, 255) };
             for (var i = 0; i < original.Length; i++)
             {
-                var raster = (height - 1 - i / width) * width + i % width;
-                var wall = structural[raster] != 0;
-                mask[i] = wall ? new Color32(0, 0, 0, 255) : new Color32(255, 255, 255, 255);
-                candidate[i] = raw[raster] != 0 ? new Color32(0, 0, 0, 255) : new Color32(255, 255, 255, 255);
-                overlay[i] = wall ? new Color32(255, 30, 30, 255) : original[i];
+                var p = (height - 1 - i / width) * width + i % width;
+                var color = new Color32(255, 255, 255, 255);
+                if (d.exteriorMask[p] != 0) color = new Color32(215, 220, 225, 255);
+                if (d.voidMask[p] != 0) color = new Color32(75, 80, 90, 255);
+                if (d.regionLabels[p] != 0) color = palette[d.regionLabels[p] % palette.Length];
+                if (d.openingMask[p] != 0) color = new Color32(255, 215, 45, 255);
+                if (d.architecturalWallMask[p] != 0) color = new Color32(25, 35, 45, 255);
+                regions[i] = color;
+                overlay[i] = d.architecturalWallMask[p] != 0 ? new Color32(20, 40, 220, 255) :
+                    d.rejectedObjectMask[p] != 0 ? new Color32(230, 55, 55, 255) :
+                    d.openingMask[p] != 0 ? new Color32(255, 215, 45, 255) :
+                    d.voidMask[p] != 0 ? new Color32(75, 80, 90, 255) :
+                    d.floorMask[p] != 0 ? new Color32(90, 205, 120, 255) : original[i];
             }
-            WriteImage(prefix + "-candidate-mask.png", width, height, candidate);
-            WriteImage(prefix + "-structural-mask.png", width, height, mask);
+            WriteImage(prefix + "-regions.png", width, height, regions);
             WriteImage(prefix + "-footprint-overlay.png", width, height, overlay);
-            var floorMask = new Color32[original.Length];
-            for (var i = 0; i < floorMask.Length; i++) floorMask[i] = new Color32(255, 255, 255, 255);
-            foreach (var run in result.annotations.rooms[0].rasterRuns)
-                for (var y = (int)run.minY; y < run.maxY; y++) for (var x = (int)run.minX; x < run.maxX; x++)
-                    floorMask[(height - 1 - y) * width + x] = new Color32(0, 0, 0, 255);
-            WriteImage(prefix + "-floor-mask.png", width, height, floorMask);
+        }
+        private static byte[] Combine(byte[] a, byte[] b)
+        { var combined = new byte[a.Length]; for (var i = 0; i < a.Length; i++) if (a[i] != 0 || b[i] != 0) combined[i] = 1; return combined; }
+        private static void WriteLayer(string path, int width, int height, byte[] layer, Color32 marked)
+        {
+            var pixels = new Color32[layer.Length];
+            for (var i = 0; i < pixels.Length; i++)
+            { var p = (height - 1 - i / width) * width + i % width; pixels[i] = layer[p] != 0 ? marked : new Color32(255, 255, 255, 255); }
+            WriteImage(path, width, height, pixels);
         }
         private static void WriteImage(string path, int width, int height, Color32[] pixels)
         { var texture = new Texture2D(width, height, TextureFormat.RGBA32, false); texture.SetPixels32(pixels); texture.Apply(); File.WriteAllBytes(path, texture.EncodeToPNG()); UnityEngine.Object.DestroyImmediate(texture); }

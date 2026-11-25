@@ -76,6 +76,7 @@ namespace ARNav.Runtime.Extraction
         public float roomMaskCoverage, roomMaskFalseFill, wallCenterlinePrecision, wallMaskRecall, wallMaskIoU;
         [NonSerialized] public byte[] rawThresholdMask, cleanedWallMask, exteriorMask, interiorMask, regionLabels, contourMask, openingMask;
         [NonSerialized] public byte[] binaryBlackMask, textExclusionMask, architecturalWallMask;
+        [NonSerialized] public byte[] rejectedObjectMask, voidMask, floorMask, virtualClosureMask;
     }
 
     public interface IFloorPlanExtractor

@@ -13,6 +13,11 @@ namespace ARNav.Core.Data
         // Serialized architectural wall occupancy as merged image-space rectangles.
         // This mask, not detected labels or room semantics, is the 3D wall source.
         public List<PixelRasterRun> wallRuns = new List<PixelRasterRun>();
+        // Detection-only occupancy. Only wallRuns may feed the wall mesh.
+        public List<PixelRasterRun> exteriorRuns = new List<PixelRasterRun>();
+        public List<PixelRasterRun> voidRuns = new List<PixelRasterRun>();
+        public List<PixelRasterRun> openingRuns = new List<PixelRasterRun>();
+        public List<PixelRasterRun> rejectedObjectRuns = new List<PixelRasterRun>();
         // Ordered, derived centerline paths in source-image pixel coordinates.
         public List<WallPathData> wallPaths = new List<WallPathData>();
         public WallPathDiagnostics wallPathDiagnostics = new WallPathDiagnostics();

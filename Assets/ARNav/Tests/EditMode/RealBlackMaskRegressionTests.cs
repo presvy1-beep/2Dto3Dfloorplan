@@ -29,7 +29,8 @@ namespace ARNav.Tests.EditMode
         private static FloorPlanExtractionResult Extract(string name)
         {
             var path = Path.Combine(Directory.GetCurrentDirectory(), "Logs", "current-input", name);
-            if (!File.Exists(path)) Assert.Ignore("Real-plan fixture is not installed: " + path);
+            if (!File.Exists(path)) path = Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile), "Downloads", name);
+            Assert.IsTrue(File.Exists(path), "Real-plan fixture is not installed: " + path);
             var texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
             try
             {
